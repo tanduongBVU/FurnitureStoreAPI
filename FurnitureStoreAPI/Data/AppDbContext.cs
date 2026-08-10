@@ -13,6 +13,7 @@ namespace FurnitureStoreAPI.Data
         public DbSet<Order> Orders { get; set; }
         public DbSet<OrderItem> OrderItems { get; set; }
         public DbSet<Contact> Contacts { get; set; }
+        public DbSet<SiteSetting> SiteSettings { get; set; }   // ← dòng mới thêm
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

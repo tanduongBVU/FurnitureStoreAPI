@@ -8,107 +8,207 @@ using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-builder.Services.AddControllers()
+// =====================================================
+// CONTROLLERS
+// =====================================================
+
+builder.Services
+    .AddControllers()
     .AddJsonOptions(options =>
     {
-        options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
+        options.JsonSerializerOptions.ReferenceHandler =
+            ReferenceHandler.IgnoreCycles;
     });
+
+
+// =====================================================
+// DATABASE
+// =====================================================
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(
-        builder.Configuration.GetConnectionString("DefaultConnection")));
+        builder.Configuration.GetConnectionString("DefaultConnection")
+    )
+);
 
-// ← Thêm CORS
+
+// =====================================================
+// CORS
+// =====================================================
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontends", policy =>
     {
-        policy.WithOrigins(
-            "http://localhost:5173",  // FurnitureStoreClient
-            "http://localhost:5174"   // FurnitureStoreAdmin
-        )
-        .AllowAnyHeader()
-        .AllowAnyMethod();
+        policy
+            .WithOrigins(
+                "http://localhost:5173",
+                "http://localhost:5174",
+                "https://furniture-store-client-rouge.vercel.app"   // ← thêm dòng này
+            )
+            .AllowAnyHeader()
+            .AllowAnyMethod();
     });
 });
 
-// ← Thêm JWT Authentication
-var jwtSettings = builder.Configuration.GetSection("Jwt");
-var jwtKey = jwtSettings["Key"]
-    ?? throw new InvalidOperationException("Thiếu cấu hình Jwt:Key trong appsettings.json");
 
-builder.Services.AddAuthentication(options =>
-{
-    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-})
-.AddJwtBearer(options =>
-{
-    options.TokenValidationParameters = new TokenValidationParameters
+// =====================================================
+// JWT
+// =====================================================
+
+var jwtSettings = builder.Configuration.GetSection("Jwt");
+
+var jwtKey = jwtSettings["Key"]
+    ?? throw new InvalidOperationException(
+        "Thiếu cấu hình Jwt:Key trong appsettings.json"
+    );
+
+builder.Services
+    .AddAuthentication(options =>
     {
-        ValidateIssuer = true,
-        ValidateAudience = true,
-        ValidateLifetime = true,
-        ValidateIssuerSigningKey = true,
-        ValidIssuer = jwtSettings["Issuer"],
-        ValidAudience = jwtSettings["Audience"],
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
-    };
-});
+        options.DefaultAuthenticateScheme =
+            JwtBearerDefaults.AuthenticationScheme;
+
+        options.DefaultChallengeScheme =
+            JwtBearerDefaults.AuthenticationScheme;
+    })
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters =
+            new TokenValidationParameters
+            {
+                ValidateIssuer = true,
+                ValidateAudience = true,
+                ValidateLifetime = true,
+                ValidateIssuerSigningKey = true,
+
+                ValidIssuer = jwtSettings["Issuer"],
+                ValidAudience = jwtSettings["Audience"],
+
+                IssuerSigningKey =
+                    new SymmetricSecurityKey(
+                        Encoding.UTF8.GetBytes(jwtKey)
+                    )
+            };
+    });
+
+
+// =====================================================
+// AUTHORIZATION
+// =====================================================
 
 builder.Services.AddAuthorization();
 
-// ← Đăng ký TokenService
+
+// =====================================================
+// TOKEN SERVICE
+// =====================================================
+
+// Nếu class của bạn tên là TokenService
 builder.Services.AddSingleton<TokenService>();
 
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
+
+// =====================================================
+// SWAGGER
+// =====================================================
+
 builder.Services.AddEndpointsApiExplorer();
+
 builder.Services.AddSwaggerGen(options =>
 {
-    // Cho phép Swagger nhập Bearer token để test API cần đăng nhập
-    options.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
-    {
-        Description = "Nhập: Bearer {token}",
-        Name = "Authorization",
-        In = Microsoft.OpenApi.Models.ParameterLocation.Header,
-        Type = Microsoft.OpenApi.Models.SecuritySchemeType.ApiKey,
-        Scheme = "Bearer"
-    });
-    options.AddSecurityRequirement(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
-    {
+    options.AddSecurityDefinition(
+        "Bearer",
+        new Microsoft.OpenApi.Models.OpenApiSecurityScheme
         {
-            new Microsoft.OpenApi.Models.OpenApiSecurityScheme
-            {
-                Reference = new Microsoft.OpenApi.Models.OpenApiReference
-                {
-                    Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,
-                    Id = "Bearer"
-                }
-            },
-            Array.Empty<string>()
+            Description = "Nhập: Bearer {token}",
+            Name = "Authorization",
+            In = Microsoft.OpenApi.Models.ParameterLocation.Header,
+            Type = Microsoft.OpenApi.Models.SecuritySchemeType.ApiKey,
+            Scheme = "Bearer"
         }
-    });
+    );
+
+    options.AddSecurityRequirement(
+        new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
+        {
+            {
+                new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+                {
+                    Reference =
+                        new Microsoft.OpenApi.Models.OpenApiReference
+                        {
+                            Type =
+                                Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,
+
+                            Id = "Bearer"
+                        }
+                },
+
+                Array.Empty<string>()
+            }
+        }
+    );
 });
+
+
+// =====================================================
+// BUILD APP
+// =====================================================
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
+
+// =====================================================
+// SWAGGER
+// =====================================================
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
 
-// ← CORS phải đứng trước Authentication/Authorization
+// =====================================================
+// HTTPS
+// =====================================================
+
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
+
+
+// =====================================================
+// CORS
+// =====================================================
+
 app.UseCors("AllowFrontends");
 
-// ← Thêm UseAuthentication TRƯỚC UseAuthorization
+
+// =====================================================
+// AUTHENTICATION
+// =====================================================
+
 app.UseAuthentication();
+
+
+// =====================================================
+// AUTHORIZATION
+// =====================================================
+
 app.UseAuthorization();
 
+
+// =====================================================
+// CONTROLLERS
+// =====================================================
+
 app.MapControllers();
+
+
+// =====================================================
+// RUN
+// =====================================================
 
 app.Run();
