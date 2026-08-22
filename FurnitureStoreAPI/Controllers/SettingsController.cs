@@ -24,23 +24,23 @@ namespace FurnitureStoreAPI.Controllers
 
             ["hero.slide1.title"] = "Không gian sống\nđẳng cấp",
             ["hero.slide1.subtitle"] = "Nội thất cao cấp — tinh tế từng đường nét",
-            ["hero.slide1.image"] = "https://loremflickr.com/900/700/livingroom,luxury",
+            ["hero.slide1.image"] = "https://images.unsplash.com/photo-1583847268964-b28dc8f51f92?w=1600&q=80&auto=format&fit=crop",
             ["hero.slide1.accent"] = "#c8a96e",
             ["hero.slide1.bg"] = "#2c1f10",
 
             ["hero.slide2.title"] = "Chất liệu\ntự nhiên",
             ["hero.slide2.subtitle"] = "Gỗ óc chó, gỗ sồi nhập khẩu chính hãng",
-            ["hero.slide2.image"] = "https://loremflickr.com/900/700/woodfurniture,walnut",
+            ["hero.slide2.image"] = "https://images.unsplash.com/photo-1621295693450-080546d2ec8e?w=1600&q=80&auto=format&fit=crop",
             ["hero.slide2.accent"] = "#7ab87a",
             ["hero.slide2.bg"] = "#1a2c20",
 
             ["hero.slide3.title"] = "Thiết kế\nriêng cho bạn",
             ["hero.slide3.subtitle"] = "Tư vấn & thi công theo yêu cầu",
-            ["hero.slide3.image"] = "https://loremflickr.com/900/700/furniture,craftsman",
+            ["hero.slide3.image"] = "https://images.unsplash.com/photo-1687180498602-5a1046defaa4?w=1600&q=80&auto=format&fit=crop",
             ["hero.slide3.accent"] = "#6e9ec8",
             ["hero.slide3.bg"] = "#1a1f2c",
 
-            ["about.image"] = "https://loremflickr.com/800/600/furniture,showroom",
+            ["about.image"] = "https://images.unsplash.com/photo-1680503397090-0483be73406f?w=1200&q=80&auto=format&fit=crop",
             ["about.title"] = "Hơn 15 năm kiến tạo\nkhông gian sống đẹp",
             ["about.description"] = "Chúng tôi tin rằng một ngôi nhà đẹp bắt đầu từ những món đồ nội thất được làm ra với tâm huyết. Mỗi sản phẩm của LuxWood đều được chọn lọc từ gỗ tự nhiên cao cấp, gia công thủ công tỉ mỉ và qua kiểm định chất lượng nghiêm ngặt.",
             ["about.stat1Number"] = "500+",
@@ -54,6 +54,23 @@ namespace FurnitureStoreAPI.Controllers
             ["footer.phone"] = "0909 123 456",
             ["footer.email"] = "hello@luxwood.vn",
             ["footer.hours"] = "Thứ 2 – Thứ 7: 8:00 – 20:00",
+
+            // ── Banner khuyến mãi (toàn site) ───────────────────────────
+            // enabled mặc định "false" — chưa cấu hình gì thì không hiện banner trống.
+            ["promo.banner.enabled"] = "false",
+            ["promo.banner.text"] = "🎉 Ưu đãi đặc biệt — Giảm giá đến 30% cho các sản phẩm chọn lọc!",
+            ["promo.banner.linkText"] = "Xem ngay",
+            ["promo.banner.linkUrl"] = "/sale",
+            ["promo.banner.bg"] = "#3b2a1a",
+            ["promo.banner.textColor"] = "#f5f0e8",
+
+            // ── Danh mục phòng (trang chủ) ──────────────────────────────
+            ["rooms.room1.image"] = "",
+            ["rooms.room2.image"] = "",
+            ["rooms.room3.image"] = "",
+            ["rooms.room4.image"] = "",
+            ["rooms.room5.image"] = "",
+            ["rooms.room6.image"] = "",
 
             // ── Trang Giới thiệu (/about) ──────────────────────────────
 
