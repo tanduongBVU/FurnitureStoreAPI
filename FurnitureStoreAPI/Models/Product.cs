@@ -20,6 +20,7 @@
         // Giá sau giảm luôn TÍNH TỪ Price gốc (không lưu giá đã giảm sẵn),
         // để đổi Price gốc không làm sai lệch % giảm đã đặt.
         public int DiscountPercent { get; set; } = 0;
+<<<<<<< HEAD
 
         // Chất liệu chính của sản phẩm (VD: "Gỗ tự nhiên", "Vải nỉ"...).
         // Nullable vì sản phẩm cũ trong DB chưa có dữ liệu này — Admin cần vào nhập lại.
@@ -27,5 +28,7 @@
 
         // Màu sắc chủ đạo (VD: "Nâu gỗ", "Trắng"...). Nullable cùng lý do với Material.
         public string? Color { get; set; }
+=======
+>>>>>>> origin/main
     }
 }

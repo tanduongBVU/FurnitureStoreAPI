@@ -123,6 +123,7 @@ builder.Services.AddScoped<IEmailService, EmailService>();
 
 
 // =====================================================
+<<<<<<< HEAD
 // HTTP CLIENT (dùng cho ChatController gọi ra Gemini API)
 // =====================================================
 
@@ -133,6 +134,8 @@ builder.Services.AddHttpClient();
 
 
 // =====================================================
+=======
+>>>>>>> origin/main
 // SWAGGER
 // =====================================================
 
