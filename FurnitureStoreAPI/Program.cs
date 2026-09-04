@@ -1,4 +1,5 @@
 ﻿using FurnitureStoreAPI.Data;
+using FurnitureStoreAPI.Models;
 using FurnitureStoreAPI.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
@@ -106,6 +107,29 @@ builder.Services.AddAuthorization();
 
 // Nếu class của bạn tên là TokenService
 builder.Services.AddSingleton<TokenService>();
+
+
+// =====================================================
+// EMAIL SERVICE
+// =====================================================
+
+// Bind section "Email" trong appsettings.json vào EmailSettings, để EmailService
+// nhận qua IOptions<EmailSettings> (Options Pattern chuẩn của ASP.NET Core).
+builder.Services.Configure<EmailSettings>(builder.Configuration.GetSection("Email"));
+// Scoped vì SmtpClient không nên dùng chung 1 instance xuyên suốt vòng đời ứng dụng
+// (Singleton) — mỗi request/scope tự tạo instance riêng, an toàn hơn khi gửi email
+// đồng thời từ nhiều request khác nhau.
+builder.Services.AddScoped<IEmailService, EmailService>();
+
+
+// =====================================================
+// HTTP CLIENT (dùng cho ChatController gọi ra Gemini API)
+// =====================================================
+
+// Đăng ký IHttpClientFactory — cách chuẩn của ASP.NET Core để tạo HttpClient, tránh lỗi
+// "socket exhaustion" nếu tự new HttpClient() thủ công nhiều lần. ChatController inject
+// IHttpClientFactory qua constructor, không cần cấu hình gì thêm ở đây.
+builder.Services.AddHttpClient();
 
 
 // =====================================================
