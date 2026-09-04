@@ -123,6 +123,19 @@ builder.Services.AddScoped<IEmailService, EmailService>();
 
 
 // =====================================================
+<<<<<<< HEAD
+// HTTP CLIENT (dùng cho ChatController gọi ra Gemini API)
+// =====================================================
+
+// Đăng ký IHttpClientFactory — cách chuẩn của ASP.NET Core để tạo HttpClient, tránh lỗi
+// "socket exhaustion" nếu tự new HttpClient() thủ công nhiều lần. ChatController inject
+// IHttpClientFactory qua constructor, không cần cấu hình gì thêm ở đây.
+builder.Services.AddHttpClient();
+
+
+// =====================================================
+=======
+>>>>>>> origin/main
 // SWAGGER
 // =====================================================
 

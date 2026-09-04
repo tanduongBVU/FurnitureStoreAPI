@@ -4,6 +4,7 @@ using FurnitureStoreAPI.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace FurnitureStoreAPI.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260901011259_AddMaterialAndColorToProduct")]
+    partial class AddMaterialAndColorToProduct
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -65,67 +68,6 @@ namespace FurnitureStoreAPI.Migrations
                     b.ToTable("BlogPosts");
                 });
 
-<<<<<<< HEAD
-            modelBuilder.Entity("FurnitureStoreAPI.Models.Bundle", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("Description")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<int>("DiscountPercent")
-                        .HasColumnType("int");
-
-                    b.Property<string>("Image")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("bit");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("Bundles");
-                });
-
-            modelBuilder.Entity("FurnitureStoreAPI.Models.BundleItem", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("BundleId")
-                        .HasColumnType("int");
-
-                    b.Property<int>("ProductId")
-                        .HasColumnType("int");
-
-                    b.Property<int>("Quantity")
-                        .HasColumnType("int");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("BundleId");
-
-                    b.HasIndex("ProductId");
-
-                    b.ToTable("BundleItems");
-                });
-
-=======
->>>>>>> origin/main
             modelBuilder.Entity("FurnitureStoreAPI.Models.Contact", b =>
                 {
                     b.Property<int>("Id")
@@ -562,28 +504,6 @@ namespace FurnitureStoreAPI.Migrations
                     b.ToTable("Users");
                 });
 
-<<<<<<< HEAD
-            modelBuilder.Entity("FurnitureStoreAPI.Models.BundleItem", b =>
-                {
-                    b.HasOne("FurnitureStoreAPI.Models.Bundle", "Bundle")
-                        .WithMany("Items")
-                        .HasForeignKey("BundleId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("FurnitureStoreAPI.Models.Product", "Product")
-                        .WithMany()
-                        .HasForeignKey("ProductId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("Bundle");
-
-                    b.Navigation("Product");
-                });
-
-=======
->>>>>>> origin/main
             modelBuilder.Entity("FurnitureStoreAPI.Models.Order", b =>
                 {
                     b.HasOne("FurnitureStoreAPI.Models.User", null)
@@ -626,14 +546,6 @@ namespace FurnitureStoreAPI.Migrations
                         .IsRequired();
                 });
 
-<<<<<<< HEAD
-            modelBuilder.Entity("FurnitureStoreAPI.Models.Bundle", b =>
-                {
-                    b.Navigation("Items");
-                });
-
-=======
->>>>>>> origin/main
             modelBuilder.Entity("FurnitureStoreAPI.Models.Order", b =>
                 {
                     b.Navigation("OrderItems");

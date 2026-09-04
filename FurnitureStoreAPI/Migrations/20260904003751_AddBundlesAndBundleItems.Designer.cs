@@ -4,6 +4,7 @@ using FurnitureStoreAPI.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace FurnitureStoreAPI.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260904003751_AddBundlesAndBundleItems")]
+    partial class AddBundlesAndBundleItems
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -65,7 +68,6 @@ namespace FurnitureStoreAPI.Migrations
                     b.ToTable("BlogPosts");
                 });
 
-<<<<<<< HEAD
             modelBuilder.Entity("FurnitureStoreAPI.Models.Bundle", b =>
                 {
                     b.Property<int>("Id")
@@ -124,8 +126,6 @@ namespace FurnitureStoreAPI.Migrations
                     b.ToTable("BundleItems");
                 });
 
-=======
->>>>>>> origin/main
             modelBuilder.Entity("FurnitureStoreAPI.Models.Contact", b =>
                 {
                     b.Property<int>("Id")
@@ -562,7 +562,6 @@ namespace FurnitureStoreAPI.Migrations
                     b.ToTable("Users");
                 });
 
-<<<<<<< HEAD
             modelBuilder.Entity("FurnitureStoreAPI.Models.BundleItem", b =>
                 {
                     b.HasOne("FurnitureStoreAPI.Models.Bundle", "Bundle")
@@ -582,8 +581,6 @@ namespace FurnitureStoreAPI.Migrations
                     b.Navigation("Product");
                 });
 
-=======
->>>>>>> origin/main
             modelBuilder.Entity("FurnitureStoreAPI.Models.Order", b =>
                 {
                     b.HasOne("FurnitureStoreAPI.Models.User", null)
@@ -626,14 +623,11 @@ namespace FurnitureStoreAPI.Migrations
                         .IsRequired();
                 });
 
-<<<<<<< HEAD
             modelBuilder.Entity("FurnitureStoreAPI.Models.Bundle", b =>
                 {
                     b.Navigation("Items");
                 });
 
-=======
->>>>>>> origin/main
             modelBuilder.Entity("FurnitureStoreAPI.Models.Order", b =>
                 {
                     b.Navigation("OrderItems");

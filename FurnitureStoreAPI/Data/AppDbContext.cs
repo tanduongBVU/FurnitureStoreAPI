@@ -16,9 +16,16 @@ namespace FurnitureStoreAPI.Data
         public DbSet<Review> Reviews { get; set; }
         public DbSet<NewsletterSubscriber> NewsletterSubscribers { get; set; } // ← dòng mới thêm
         public DbSet<Coupon> Coupons { get; set; }
+<<<<<<< HEAD
+        public DbSet<Service> Services { get; set; }
+        public DbSet<Project> Projects { get; set; }
+        public DbSet<Bundle> Bundles { get; set; }           // ← dòng mới thêm
+        public DbSet<BundleItem> BundleItems { get; set; }   // ← dòng mới thêm
+=======
 
         public DbSet<Service> Services { get; set; }
         public DbSet<Project> Projects { get; set; }
+>>>>>>> origin/main
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             // Order → OrderItems
@@ -27,12 +34,57 @@ namespace FurnitureStoreAPI.Data
                 .WithMany(o => o.OrderItems)
                 .HasForeignKey(oi => oi.OrderId)
                 .OnDelete(DeleteBehavior.Cascade);
-
             // OrderItem → Product
             modelBuilder.Entity<OrderItem>()
                 .HasOne(oi => oi.Product)
                 .WithMany()
                 .HasForeignKey(oi => oi.ProductId)
+                .OnDelete(DeleteBehavior.Restrict);
+            // Order → User (khách đã đăng nhập). UserId nullable = khách vãng lai (không có
+            // User liên kết). IsRequired(false) khai báo rõ FK này được phép null.
+            // Restrict: nếu User đó còn đơn hàng, chặn xoá — giữ toàn vẹn lịch sử đơn hàng,
+            // tránh Order "mồ côi" trỏ tới một User không còn tồn tại.
+            modelBuilder.Entity<Order>()
+                .HasOne<User>()
+                .WithMany()
+                .HasForeignKey(o => o.UserId)
+                .IsRequired(false)
+                .OnDelete(DeleteBehavior.Restrict);
+            // Review → User. Review luôn được tạo bởi khách ĐÃ đăng nhập ([Authorize] ở
+            // ReviewsController), nên UserId ở đây luôn có giá trị thật — FK bắt buộc (not null).
+            // Restrict: chặn xoá User nếu còn Review, giữ toàn vẹn đánh giá đã có.
+            modelBuilder.Entity<Review>()
+                .HasOne<User>()
+                .WithMany()
+                .HasForeignKey(r => r.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            // Review → Product. Tương tự — Restrict để chặn xoá Product nếu còn Review,
+            // tránh mất đánh giá hoặc Review trỏ tới sản phẩm không tồn tại. Lưu ý:
+            // ProductsController hiện xoá sản phẩm bằng soft-delete (IsActive = false),
+            // không xoá hẳn dòng dữ liệu, nên ràng buộc này chủ yếu phòng ngừa trường hợp
+            // xoá cứng thủ công qua DB hoặc script khác trong tương lai.
+            modelBuilder.Entity<Review>()
+                .HasOne<Product>()
+                .WithMany()
+                .HasForeignKey(r => r.ProductId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            // Bundle → BundleItems: xoá Bundle thì xoá luôn các dòng BundleItem thuộc về nó
+            // (Cascade) — BundleItem không có ý nghĩa gì nếu đứng riêng không thuộc combo nào.
+            modelBuilder.Entity<BundleItem>()
+                .HasOne(bi => bi.Bundle)
+                .WithMany(b => b.Items)
+                .HasForeignKey(bi => bi.BundleId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // BundleItem → Product: Restrict, giống pattern OrderItem → Product — không cho
+            // xoá cứng 1 Product nếu nó đang nằm trong bất kỳ combo nào, tránh combo bị
+            // "mồ côi" thiếu sản phẩm. (Trong thực tế Product chỉ soft-delete nên hiếm khi
+            // chạm ràng buộc này, nhưng vẫn khai báo để phòng ngừa xoá cứng thủ công.)
+            modelBuilder.Entity<BundleItem>()
+                .HasOne(bi => bi.Product)
+                .WithMany()
+                .HasForeignKey(bi => bi.ProductId)
                 .OnDelete(DeleteBehavior.Restrict);
 
             // Order → User (khách đã đăng nhập). UserId nullable = khách vãng lai (không có
