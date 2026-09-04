@@ -16,16 +16,15 @@ namespace FurnitureStoreAPI.Data
         public DbSet<Review> Reviews { get; set; }
         public DbSet<NewsletterSubscriber> NewsletterSubscribers { get; set; } // ← dòng mới thêm
         public DbSet<Coupon> Coupons { get; set; }
-<<<<<<< HEAD
+
         public DbSet<Service> Services { get; set; }
         public DbSet<Project> Projects { get; set; }
         public DbSet<Bundle> Bundles { get; set; }           // ← dòng mới thêm
         public DbSet<BundleItem> BundleItems { get; set; }   // ← dòng mới thêm
-=======
 
-        public DbSet<Service> Services { get; set; }
-        public DbSet<Project> Projects { get; set; }
->>>>>>> origin/main
+
+
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             // Order → OrderItems

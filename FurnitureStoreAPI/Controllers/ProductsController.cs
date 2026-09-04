@@ -50,11 +50,10 @@ namespace FurnitureStoreAPI.Controllers
                     p.IsActive,
                     p.CreatedAt,
                     p.DiscountPercent,
-<<<<<<< HEAD
+
                     p.Material,
                     p.Color,
-=======
->>>>>>> origin/main
+
                     AverageRating = stat != null ? Math.Round(stat.Avg, 1) : 0,
                     ReviewCount = stat?.Count ?? 0,
                 };
@@ -102,7 +101,7 @@ namespace FurnitureStoreAPI.Controllers
                 .ToListAsync();
 
             return Ok(await AttachRatingsAsync(products));
-<<<<<<< HEAD
+
         }
 
         // GET: api/products/5/related
@@ -141,8 +140,7 @@ namespace FurnitureStoreAPI.Controllers
             }
 
             return Ok(await AttachRatingsAsync(sameCategory));
-=======
->>>>>>> origin/main
+
         }
 
         // GET: api/products/all
@@ -159,13 +157,12 @@ namespace FurnitureStoreAPI.Controllers
         // GET: api/products/5  — dùng chung cho cả Client (chi tiết sản phẩm) và Admin (trang sửa)
         // Giữ nguyên trả về Product gốc — trang ProductDetail.jsx đã tự gọi review riêng để
         // tính rating hiển thị ở đó, không cần đụng vào endpoint này.
-<<<<<<< HEAD
+
         //
         // LƯU Ý THỨ TỰ ROUTE: định nghĩa này ({id}) PHẢI nằm SAU "search", "sale", "all" và
         // "{id}/related" ở trên — nếu đặt lên trước, ASP.NET sẽ hiểu nhầm "search"/"sale"/"all"
         // là một giá trị id (kiểu route "/products/search" khớp nhầm với "/products/{id}").
-=======
->>>>>>> origin/main
+
         [HttpGet("{id}")]
         public async Task<IActionResult> GetById(int id)
         {
@@ -204,12 +201,13 @@ namespace FurnitureStoreAPI.Controllers
             existing.Stock = product.Stock;
             existing.IsBestSeller = product.IsBestSeller;
             existing.DiscountPercent = product.DiscountPercent;
-<<<<<<< HEAD
+
             existing.Material = product.Material;
             existing.Color = product.Color;
-=======
->>>>>>> origin/main
+
+
             // Không đổi IsActive ở đây — việc ẩn/hiện dùng riêng 2 endpoint bên dưới
+
 
             await _context.SaveChangesAsync();
             return NoContent();
