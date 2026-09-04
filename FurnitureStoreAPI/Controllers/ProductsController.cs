@@ -206,6 +206,9 @@ namespace FurnitureStoreAPI.Controllers
             existing.Color = product.Color;
 
 
+            // Không đổi IsActive ở đây — việc ẩn/hiện dùng riêng 2 endpoint bên dưới
+
+
             await _context.SaveChangesAsync();
             return NoContent();
         }

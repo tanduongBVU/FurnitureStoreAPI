@@ -23,7 +23,7 @@ namespace FurnitureStoreAPI.Data
         public DbSet<BundleItem> BundleItems { get; set; }   // ← dòng mới thêm
 
 
-        
+
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
