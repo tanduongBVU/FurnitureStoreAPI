@@ -65,7 +65,7 @@ namespace FurnitureStoreAPI.Migrations
                     b.ToTable("BlogPosts");
                 });
 
-<<<<<<< HEAD
+
             modelBuilder.Entity("FurnitureStoreAPI.Models.Bundle", b =>
                 {
                     b.Property<int>("Id")
@@ -124,8 +124,7 @@ namespace FurnitureStoreAPI.Migrations
                     b.ToTable("BundleItems");
                 });
 
-=======
->>>>>>> origin/main
+
             modelBuilder.Entity("FurnitureStoreAPI.Models.Contact", b =>
                 {
                     b.Property<int>("Id")
@@ -562,7 +561,7 @@ namespace FurnitureStoreAPI.Migrations
                     b.ToTable("Users");
                 });
 
-<<<<<<< HEAD
+
             modelBuilder.Entity("FurnitureStoreAPI.Models.BundleItem", b =>
                 {
                     b.HasOne("FurnitureStoreAPI.Models.Bundle", "Bundle")
@@ -582,8 +581,7 @@ namespace FurnitureStoreAPI.Migrations
                     b.Navigation("Product");
                 });
 
-=======
->>>>>>> origin/main
+
             modelBuilder.Entity("FurnitureStoreAPI.Models.Order", b =>
                 {
                     b.HasOne("FurnitureStoreAPI.Models.User", null)
@@ -626,14 +624,13 @@ namespace FurnitureStoreAPI.Migrations
                         .IsRequired();
                 });
 
-<<<<<<< HEAD
+
             modelBuilder.Entity("FurnitureStoreAPI.Models.Bundle", b =>
                 {
                     b.Navigation("Items");
                 });
 
-=======
->>>>>>> origin/main
+
             modelBuilder.Entity("FurnitureStoreAPI.Models.Order", b =>
                 {
                     b.Navigation("OrderItems");
