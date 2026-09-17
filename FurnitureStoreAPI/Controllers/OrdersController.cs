@@ -20,9 +20,6 @@ namespace FurnitureStoreAPI.Controllers
             _emailService = emailService;
         }
 
-        // Chỉ gửi email cho khách ĐÃ ĐĂNG NHẬP — Order chưa có field Email riêng, nên lấy
-        // trực tiếp từ bảng Users. UserId giờ là int? (đúng bản chất: null = khách vãng
-        // lai), nên chỉ cần kiểm tra HasValue là đủ, không cần so sánh với 0 như trước nữa.
         private async Task<string?> GetUserEmailAsync(int? userId)
         {
             if (!userId.HasValue) return null;
@@ -30,7 +27,6 @@ namespace FurnitureStoreAPI.Controllers
             return user?.Email;
         }
 
-        // GET: api/orders  — chỉ Admin & Nhân viên xem được danh sách đơn (trang quản trị)
         [Authorize(Roles = "Admin,Nhân viên")]
         [HttpGet]
         public async Task<IActionResult> Get()
@@ -42,9 +38,6 @@ namespace FurnitureStoreAPI.Controllers
             return Ok(orders);
         }
 
-        // GET: api/orders/mine — khách hàng đã đăng nhập xem đơn hàng CỦA CHÍNH MÌNH
-        // Lấy UserId từ claim NameIdentifier trong token (TokenService đã gắn sẵn khi login/register).
-        // Đặt route "mine" trước "{id}" để tránh ASP.NET hiểu nhầm "mine" là 1 tham số id.
         [Authorize]
         [HttpGet("mine")]
         public async Task<IActionResult> GetMyOrders()
@@ -61,7 +54,6 @@ namespace FurnitureStoreAPI.Controllers
             return Ok(orders);
         }
 
-        // GET: api/orders/5  — chỉ Admin & Nhân viên
         [Authorize(Roles = "Admin,Nhân viên")]
         [HttpGet("{id}")]
         public async Task<IActionResult> GetById(int id)
@@ -74,19 +66,21 @@ namespace FurnitureStoreAPI.Controllers
         }
 
         // POST: api/orders  — công khai, khách hàng đặt hàng từ FE Client không cần đăng nhập.
-        // UserId = null hợp lệ cho khách vãng lai (xem Order.cs). Nếu order.CouponCode có
-        // giá trị: server TỰ kiểm tra lại mã và TỰ tính giảm giá, KHÔNG tin bất kỳ số tiền
-        // đã giảm nào gửi từ Client — tránh khách sửa request để giả mạo giảm giá. Nếu mã
-        // không còn hợp lệ tại thời điểm đặt hàng, đơn hàng vẫn được tạo nhưng KHÔNG áp dụng
-        // giảm giá, và trả về ghi chú để FE báo cho khách biết.
+        // MỚI: kiểm tra ĐỦ HÀNG và TRỪ TỒN KHO ngay khi đơn được tạo (trạng thái "Chờ xác
+        // nhận") — trước đây tồn kho hoàn toàn không tự động thay đổi khi có đơn, Admin
+        // phải tự tay sửa. Quy tắc trừ kho:
+        //   - Sản phẩm KHÔNG biến thể: trừ thẳng Product.Stock.
+        //   - Sản phẩm CÓ biến thể: trừ ProductVariant.Stock CỦA ĐÚNG biến thể đã chọn,
+        //     ĐỒNG THỜI trừ luôn Product.Stock (tồn kho tổng) — vì tồn kho tổng được coi
+        //     là bao gồm/đại diện tổng các biến thể, phải giữ đồng bộ.
+        // Nếu bất kỳ dòng nào không đủ hàng, HUỶ TOÀN BỘ giao dịch (không lưu đơn, không
+        // trừ kho dòng nào cả) — tránh tình trạng đơn tạo được 1 phần, tồn kho sai lệch.
         [HttpPost]
         public async Task<IActionResult> Create(Order order)
         {
             order.CreatedAt = DateTime.Now;
             order.Status = "Chờ xác nhận";
 
-            // Nếu UserId được gửi lên nhưng không trỏ tới User thật nào (VD: 0, hoặc ID đã
-            // bị xoá) — chặn sớm ở đây thay vì để FK constraint ném lỗi 500 khó hiểu về sau.
             if (order.UserId.HasValue)
             {
                 var userExists = await _context.Users.AnyAsync(u => u.Id == order.UserId.Value);
@@ -94,8 +88,39 @@ namespace FurnitureStoreAPI.Controllers
                     return BadRequest(new { message = "Tài khoản không hợp lệ." });
             }
 
-            // Tổng tiền gốc luôn tính lại từ OrderItems thật trong DB, không tin Price gửi
-            // từ Client, để tránh khách sửa giá sản phẩm qua request giả mạo.
+            foreach (var item in order.OrderItems)
+            {
+                var product = await _context.Products.FindAsync(item.ProductId);
+                if (product == null)
+                    return BadRequest(new { message = $"Sản phẩm #{item.ProductId} không tồn tại." });
+
+                if (item.VariantId.HasValue)
+                {
+                    var variant = await _context.ProductVariants.FindAsync(item.VariantId.Value);
+                    if (variant == null || variant.ProductId != product.Id)
+                        return BadRequest(new { message = $"Biến thể của sản phẩm '{product.Name}' không hợp lệ." });
+
+                    if (variant.Stock < item.Quantity)
+                        return BadRequest(new
+                        {
+                            message = $"'{product.Name} - {item.VariantName}' không đủ hàng (còn {variant.Stock}, cần {item.Quantity})."
+                        });
+
+                    variant.Stock -= item.Quantity;
+                    product.Stock -= item.Quantity;
+                }
+                else
+                {
+                    if (product.Stock < item.Quantity)
+                        return BadRequest(new
+                        {
+                            message = $"'{product.Name}' không đủ hàng (còn {product.Stock}, cần {item.Quantity})."
+                        });
+
+                    product.Stock -= item.Quantity;
+                }
+            }
+
             var subtotal = order.OrderItems.Sum(i => i.Price * i.Quantity);
             decimal total = subtotal;
             string? couponNote = null;
@@ -116,8 +141,6 @@ namespace FurnitureStoreAPI.Controllers
                 }
                 else
                 {
-                    // Mã không còn hợp lệ ngay lúc chốt đơn — vẫn tạo đơn nhưng bỏ mã,
-                    // không chặn khách mất luôn cả đơn hàng chỉ vì mã bị lỗi.
                     order.CouponCode = null;
                     couponNote = reason;
                 }
@@ -127,8 +150,6 @@ namespace FurnitureStoreAPI.Controllers
             _context.Orders.Add(order);
             await _context.SaveChangesAsync();
 
-            // Gửi email xác nhận — CHỈ khi khách đã đăng nhập (xem GetUserEmailAsync).
-            // Bọc try/catch riêng để chắc chắn lỗi gửi email không ảnh hưởng response.
             try
             {
                 var email = await GetUserEmailAsync(order.UserId);
@@ -142,7 +163,6 @@ namespace FurnitureStoreAPI.Controllers
             }
             catch
             {
-                // Không để lỗi gửi email ảnh hưởng tới việc đơn hàng đã tạo thành công.
             }
 
             if (couponNote != null)
@@ -151,7 +171,6 @@ namespace FurnitureStoreAPI.Controllers
             return CreatedAtAction(nameof(GetById), new { id = order.Id }, order);
         }
 
-        // PATCH: api/orders/5/status — Admin & Nhân viên đều được cập nhật trạng thái
         [Authorize(Roles = "Admin,Nhân viên")]
         [HttpPatch("{id}/status")]
         public async Task<IActionResult> UpdateStatus(int id, [FromBody] string status)
@@ -161,10 +180,32 @@ namespace FurnitureStoreAPI.Controllers
                 .FirstOrDefaultAsync(o => o.Id == id);
             if (order == null) return NotFound();
 
+            // MỚI: nếu đơn bị chuyển sang "Huỷ", HOÀN LẠI tồn kho đã trừ lúc tạo đơn —
+            // tránh tồn kho bị "mất" oan khi khách/Admin huỷ đơn. Chỉ hoàn 1 lần — nếu
+            // đơn ĐÃ huỷ từ trước rồi lại bấm huỷ lần nữa thì không hoàn thêm lần 2.
+            if (status == "Huỷ" && order.Status != "Huỷ")
+            {
+                foreach (var item in order.OrderItems)
+                {
+                    var product = await _context.Products.FindAsync(item.ProductId);
+                    if (product == null) continue;
+
+                    if (item.VariantId.HasValue)
+                    {
+                        var variant = await _context.ProductVariants.FindAsync(item.VariantId.Value);
+                        if (variant != null) variant.Stock += item.Quantity;
+                        product.Stock += item.Quantity;
+                    }
+                    else
+                    {
+                        product.Stock += item.Quantity;
+                    }
+                }
+            }
+
             order.Status = status;
             await _context.SaveChangesAsync();
 
-            // Gửi email thông báo đổi trạng thái — CHỈ khi khách đã đăng nhập, giống Create().
             try
             {
                 var email = await GetUserEmailAsync(order.UserId);
@@ -178,13 +219,11 @@ namespace FurnitureStoreAPI.Controllers
             }
             catch
             {
-                // Không để lỗi gửi email ảnh hưởng tới việc đổi trạng thái đã lưu thành công.
             }
 
             return NoContent();
         }
 
-        // DELETE: api/orders/5  — CHỈ Admin được xoá đơn hàng
         [Authorize(Roles = "Admin")]
         [HttpDelete("{id}")]
         public async Task<IActionResult> Delete(int id)

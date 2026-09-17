@@ -16,12 +16,6 @@ namespace FurnitureStoreAPI.Controllers
             _context = context;
         }
 
-        // Gắn thêm AverageRating (làm tròn 1 chữ số thập phân) + ReviewCount vào từng sản phẩm,
-        // CHỈ tính trên review đã duyệt (IsApproved = true) — đúng những gì khách thấy công khai.
-        // Dùng LEFT JOIN thủ công (GroupJoin) để sản phẩm chưa có review nào vẫn trả về
-        // AverageRating = 0, ReviewCount = 0 thay vì bị loại khỏi kết quả.
-        // Trả về DTO ẩn danh gộp toàn bộ field gốc của Product + 2 field mới, để KHÔNG phải
-        // sửa Product.cs (model) hay chạy migration DB nào cả.
         private async Task<List<object>> AttachRatingsAsync(List<Product> products)
         {
             if (products.Count == 0) return new List<object>();
@@ -34,9 +28,23 @@ namespace FurnitureStoreAPI.Controllers
                 .Select(g => new { ProductId = g.Key, Avg = g.Average(r => r.Rating), Count = g.Count() })
                 .ToDictionaryAsync(x => x.ProductId, x => x);
 
+            var variants = await _context.ProductVariants
+                .Where(v => productIds.Contains(v.ProductId))
+                .ToListAsync();
+
             return products.Select(p =>
             {
                 ratingStats.TryGetValue(p.Id, out var stat);
+
+                // Lấy .Name TRỰC TIẾP từ đối tượng ProductVariant (đã load vào bộ nhớ ở
+                // trên) — property Name là [NotMapped]/tính toán, KHÔNG dùng lại được
+                // trong biểu thức LINQ dịch sang SQL, nhưng ở đây variants đã là List
+                // trong bộ nhớ (đã ToListAsync xong) nên gọi thẳng .Name bình thường.
+                var pVariants = variants
+                    .Where(v => v.ProductId == p.Id)
+                    .Select(v => new { v.Id, v.Material, v.Color, v.Name, v.Price, v.Stock })
+                    .ToList();
+
                 return (object)new
                 {
                     p.Id,
@@ -50,18 +58,17 @@ namespace FurnitureStoreAPI.Controllers
                     p.IsActive,
                     p.CreatedAt,
                     p.DiscountPercent,
-
                     p.Material,
                     p.Color,
-
                     AverageRating = stat != null ? Math.Round(stat.Avg, 1) : 0,
                     ReviewCount = stat?.Count ?? 0,
+                    Variants = pVariants,
+                    HasVariants = pVariants.Count > 0,
+                    DisplayPrice = pVariants.Count > 0 ? pVariants.Min(v => v.Price) : p.Price,
                 };
             }).ToList();
         }
 
-        // GET: api/products
-        // Công khai — dùng cho Client (cửa hàng). CHỈ trả về sản phẩm đang bán (IsActive = true).
         [HttpGet]
         public async Task<IActionResult> Get()
         {
@@ -71,8 +78,6 @@ namespace FurnitureStoreAPI.Controllers
             return Ok(await AttachRatingsAsync(products));
         }
 
-        // GET: api/products/sale
-        // Công khai — danh sách sản phẩm đang giảm giá (DiscountPercent > 0), dùng cho trang Khuyến Mãi.
         [HttpGet("sale")]
         public async Task<IActionResult> GetOnSale()
         {
@@ -82,11 +87,6 @@ namespace FurnitureStoreAPI.Controllers
             return Ok(await AttachRatingsAsync(products));
         }
 
-        // GET: api/products/search?q=...
-        // Công khai — dùng cho autocomplete ở ô search Navbar. Tìm theo tên (không phân biệt hoa/thường),
-        // CHỈ sản phẩm đang bán (IsActive), giới hạn 5 kết quả để dropdown gợi ý luôn gọn.
-        // Query rỗng/quá ngắn (<2 ký tự) trả về mảng rỗng ngay, không cần chạm DB — tránh gợi ý
-        // vô nghĩa khi khách vừa gõ 1 ký tự đầu tiên.
         [HttpGet("search")]
         public async Task<IActionResult> Search([FromQuery] string q)
         {
@@ -101,14 +101,8 @@ namespace FurnitureStoreAPI.Controllers
                 .ToListAsync();
 
             return Ok(await AttachRatingsAsync(products));
-
         }
 
-        // GET: api/products/5/related
-        // Công khai — gợi ý sản phẩm liên quan cho trang chi tiết sản phẩm.
-        // Ưu tiên CÙNG DANH MỤC với sản phẩm đang xem, xếp bán chạy lên trước rồi tới mới nhất.
-        // Nếu cùng danh mục không đủ RELATED_COUNT sản phẩm (VD: danh mục quá ít hàng), lấy bù
-        // thêm sản phẩm bất kỳ (khác danh mục) để luôn đủ số lượng, tránh phần gợi ý trông trống trải.
         [HttpGet("{id}/related")]
         public async Task<IActionResult> GetRelated(int id)
         {
@@ -140,12 +134,8 @@ namespace FurnitureStoreAPI.Controllers
             }
 
             return Ok(await AttachRatingsAsync(sameCategory));
-
         }
 
-        // GET: api/products/all
-        // Chỉ Admin & Nhân viên — dùng cho trang quản trị, xem được CẢ sản phẩm đã ẩn.
-        // KHÔNG gắn rating ở đây — Admin không cần hiện sao trong bảng quản lý sản phẩm.
         [Authorize(Roles = "Admin,Nhân viên")]
         [HttpGet("all")]
         public async Task<IActionResult> GetAll()
@@ -154,36 +144,44 @@ namespace FurnitureStoreAPI.Controllers
             return Ok(products);
         }
 
-        // GET: api/products/5  — dùng chung cho cả Client (chi tiết sản phẩm) và Admin (trang sửa)
-        // Giữ nguyên trả về Product gốc — trang ProductDetail.jsx đã tự gọi review riêng để
-        // tính rating hiển thị ở đó, không cần đụng vào endpoint này.
-
-        //
-        // LƯU Ý THỨ TỰ ROUTE: định nghĩa này ({id}) PHẢI nằm SAU "search", "sale", "all" và
-        // "{id}/related" ở trên — nếu đặt lên trước, ASP.NET sẽ hiểu nhầm "search"/"sale"/"all"
-        // là một giá trị id (kiểu route "/products/search" khớp nhầm với "/products/{id}").
-
         [HttpGet("{id}")]
         public async Task<IActionResult> GetById(int id)
         {
-            var product = await _context.Products.FindAsync(id);
+            var product = await _context.Products
+                .Include(p => p.Variants)
+                .FirstOrDefaultAsync(p => p.Id == id);
             if (product == null) return NotFound();
             return Ok(product);
         }
 
-        // POST: api/products  — Admin & Nhân viên đều được thêm sản phẩm
+        // POST: api/products
+        // MỚI: nếu có biến thể, kiểm tra tổng Stock các biến thể KHÔNG được vượt quá
+        // Stock tổng của sản phẩm gốc — Stock tổng coi như "sức chứa tối đa", các biến
+        // thể cộng lại không được tràn ra ngoài con số đó.
         [Authorize(Roles = "Admin,Nhân viên")]
         [HttpPost]
         public async Task<IActionResult> Create(Product product)
         {
+            if (product.Variants.Count > 0)
+            {
+                var totalVariantStock = product.Variants.Sum(v => v.Stock);
+                if (totalVariantStock > product.Stock)
+                    return BadRequest(new
+                    {
+                        message = $"Tổng tồn kho các biến thể ({totalVariantStock}) không được vượt quá tồn kho tổng ({product.Stock})."
+                    });
+            }
+
             product.CreatedAt = DateTime.Now;
             product.IsActive = true;
+            foreach (var v in product.Variants) v.Id = 0;
+
             _context.Products.Add(product);
             await _context.SaveChangesAsync();
             return CreatedAtAction(nameof(GetById), new { id = product.Id }, product);
         }
 
-        // PUT: api/products/5  — Admin & Nhân viên đều được sửa sản phẩm
+        // PUT: api/products/5
         [Authorize(Roles = "Admin,Nhân viên")]
         [HttpPut("{id}")]
         public async Task<IActionResult> Update(int id, Product product)
@@ -193,6 +191,16 @@ namespace FurnitureStoreAPI.Controllers
             var existing = await _context.Products.FindAsync(id);
             if (existing == null) return NotFound();
 
+            if (product.Variants.Count > 0)
+            {
+                var totalVariantStock = product.Variants.Sum(v => v.Stock);
+                if (totalVariantStock > product.Stock)
+                    return BadRequest(new
+                    {
+                        message = $"Tổng tồn kho các biến thể ({totalVariantStock}) không được vượt quá tồn kho tổng ({product.Stock})."
+                    });
+            }
+
             existing.Name = product.Name;
             existing.Category = product.Category;
             existing.Price = product.Price;
@@ -201,20 +209,27 @@ namespace FurnitureStoreAPI.Controllers
             existing.Stock = product.Stock;
             existing.IsBestSeller = product.IsBestSeller;
             existing.DiscountPercent = product.DiscountPercent;
-
             existing.Material = product.Material;
             existing.Color = product.Color;
 
+            var oldVariants = _context.ProductVariants.Where(v => v.ProductId == id);
+            _context.ProductVariants.RemoveRange(oldVariants);
+            foreach (var v in product.Variants)
+            {
+                _context.ProductVariants.Add(new ProductVariant
+                {
+                    ProductId = id,
+                    Material = v.Material,
+                    Color = v.Color,
+                    Price = v.Price,
+                    Stock = v.Stock,
+                });
+            }
 
             await _context.SaveChangesAsync();
             return NoContent();
         }
 
-        // DELETE: api/products/5
-        // "Xoá" ở đây thực chất là ẨN sản phẩm (soft-delete) — set IsActive = false.
-        // Không xoá dữ liệu thật để không phá vỡ các đơn hàng cũ đã tham chiếu tới
-        // sản phẩm này (ràng buộc khoá ngoại OrderItems -> Products là Restrict).
-        // CHỈ Admin được ẩn sản phẩm.
         [Authorize(Roles = "Admin")]
         [HttpDelete("{id}")]
         public async Task<IActionResult> Delete(int id)
@@ -227,8 +242,6 @@ namespace FurnitureStoreAPI.Controllers
             return NoContent();
         }
 
-        // PATCH: api/products/5/restore
-        // Hiện lại sản phẩm đã bị ẩn trước đó. CHỈ Admin được thao tác.
         [Authorize(Roles = "Admin")]
         [HttpPatch("{id}/restore")]
         public async Task<IActionResult> Restore(int id)

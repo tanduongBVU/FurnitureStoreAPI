@@ -15,12 +15,10 @@
         // lịch sử đơn hàng cũ đã tham chiếu tới sản phẩm này.
         public bool IsActive { get; set; } = true;
         public DateTime CreatedAt { get; set; } = DateTime.Now;
-
         // Phần trăm giảm giá (0 - 100). 0 = không sale.
         // Giá sau giảm luôn TÍNH TỪ Price gốc (không lưu giá đã giảm sẵn),
         // để đổi Price gốc không làm sai lệch % giảm đã đặt.
         public int DiscountPercent { get; set; } = 0;
-
 
         // Chất liệu chính của sản phẩm (VD: "Gỗ tự nhiên", "Vải nỉ"...).
         // Nullable vì sản phẩm cũ trong DB chưa có dữ liệu này — Admin cần vào nhập lại.
@@ -29,5 +27,11 @@
         // Màu sắc chủ đạo (VD: "Nâu gỗ", "Trắng"...). Nullable cùng lý do với Material.
         public string? Color { get; set; }
 
+        // Danh sách biến thể — KHÔNG BẮT BUỘC. Nếu rỗng, sản phẩm bán theo đúng
+        // Price/Stock gốc của chính nó như trước giờ (hoàn toàn tương thích ngược,
+        // không cần sửa gì các sản phẩm cũ đã có). Nếu có ít nhất 1 biến thể, Client sẽ
+        // bắt khách CHỌN 1 biến thể trước khi thêm vào giỏ, và dùng giá/tồn kho của
+        // đúng biến thể đó thay vì Price/Stock gốc của Product.
+        public List<ProductVariant> Variants { get; set; } = new();
     }
 }

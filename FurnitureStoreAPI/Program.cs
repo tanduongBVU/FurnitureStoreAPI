@@ -206,6 +206,19 @@ if (!app.Environment.IsDevelopment())
 
 
 // =====================================================
+// STATIC FILES (ảnh upload từ Admin — SiteSettings, sản phẩm, v.v.)
+// =====================================================
+
+// Phục vụ nội dung tĩnh trong wwwroot/ (bao gồm wwwroot/uploads/ do UploadController
+// tạo ra) ra ngoài qua URL dạng https://.../uploads/xxxx.jpg. KHÔNG có dòng này thì
+// dù file có nằm sẵn trên ổ đĩa, mọi request GET tới đều nhận 404 — đây chính là lý do
+// ảnh vừa upload xong không hiển thị được. Đặt TRƯỚC Authentication/Authorization vì
+// ảnh (banner, sản phẩm...) cần công khai cho cả khách chưa đăng nhập ở Client xem được,
+// không riêng gì Admin.
+app.UseStaticFiles();
+
+
+// =====================================================
 // CORS
 // =====================================================
 
