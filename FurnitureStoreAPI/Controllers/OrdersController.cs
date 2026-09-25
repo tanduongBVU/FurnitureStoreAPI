@@ -66,7 +66,7 @@ namespace FurnitureStoreAPI.Controllers
         }
 
         // POST: api/orders  — công khai, khách hàng đặt hàng từ FE Client không cần đăng nhập.
-        // MỚI: kiểm tra ĐỦ HÀNG và TRỪ TỒN KHO ngay khi đơn được tạo (trạng thái "Chờ xác
+        // Kiểm tra ĐỦ HÀNG và TRỪ TỒN KHO ngay khi đơn được tạo (trạng thái "Chờ xác
         // nhận") — trước đây tồn kho hoàn toàn không tự động thay đổi khi có đơn, Admin
         // phải tự tay sửa. Quy tắc trừ kho:
         //   - Sản phẩm KHÔNG biến thể: trừ thẳng Product.Stock.
@@ -80,6 +80,14 @@ namespace FurnitureStoreAPI.Controllers
         {
             order.CreatedAt = DateTime.Now;
             order.Status = "Chờ xác nhận";
+
+            // Chỉ chấp nhận đúng 2 giá trị hợp lệ — Client gửi gì khác/thiếu đều coi như
+            // COD (an toàn nhất, không chặn đơn hàng chỉ vì thiếu field mới này).
+            order.PaymentMethod = order.PaymentMethod == "QR" ? "QR" : "COD";
+            // PaymentStatus LUÔN bắt đầu là "Chưa thanh toán" bất kể phương thức nào — kể
+            // cả QR, vì hệ thống không tự xác nhận được tiền đã về hay chưa (không tích hợp
+            // cổng thanh toán/webhook ngân hàng), Admin phải tự xác nhận thủ công sau đó.
+            order.PaymentStatus = "Chưa thanh toán";
 
             if (order.UserId.HasValue)
             {
@@ -180,9 +188,9 @@ namespace FurnitureStoreAPI.Controllers
                 .FirstOrDefaultAsync(o => o.Id == id);
             if (order == null) return NotFound();
 
-            // MỚI: nếu đơn bị chuyển sang "Huỷ", HOÀN LẠI tồn kho đã trừ lúc tạo đơn —
-            // tránh tồn kho bị "mất" oan khi khách/Admin huỷ đơn. Chỉ hoàn 1 lần — nếu
-            // đơn ĐÃ huỷ từ trước rồi lại bấm huỷ lần nữa thì không hoàn thêm lần 2.
+            // Nếu đơn bị chuyển sang "Huỷ", HOÀN LẠI tồn kho đã trừ lúc tạo đơn — tránh
+            // tồn kho bị "mất" oan khi khách/Admin huỷ đơn. Chỉ hoàn 1 lần — nếu đơn ĐÃ
+            // huỷ từ trước rồi lại bấm huỷ lần nữa thì không hoàn thêm lần 2.
             if (status == "Huỷ" && order.Status != "Huỷ")
             {
                 foreach (var item in order.OrderItems)
@@ -221,6 +229,25 @@ namespace FurnitureStoreAPI.Controllers
             {
             }
 
+            return NoContent();
+        }
+
+        // MỚI — Admin xác nhận thanh toán THỦ CÔNG sau khi tự kiểm tra sao kê ngân hàng
+        // (đơn QR) hoặc đã thu tiền tận tay (đơn COD). Hệ thống không có cách nào tự động
+        // biết tiền đã về hay chưa vì không tích hợp cổng thanh toán/webhook ngân hàng —
+        // đây là hạn chế đã biết trước, không phải thiếu sót.
+        [Authorize(Roles = "Admin,Nhân viên")]
+        [HttpPatch("{id}/payment-status")]
+        public async Task<IActionResult> UpdatePaymentStatus(int id, [FromBody] string paymentStatus)
+        {
+            if (paymentStatus != "Đã thanh toán" && paymentStatus != "Chưa thanh toán")
+                return BadRequest(new { message = "Trạng thái thanh toán không hợp lệ." });
+
+            var order = await _context.Orders.FindAsync(id);
+            if (order == null) return NotFound();
+
+            order.PaymentStatus = paymentStatus;
+            await _context.SaveChangesAsync();
             return NoContent();
         }
 
