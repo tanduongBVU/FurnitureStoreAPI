@@ -3,6 +3,8 @@ using FurnitureStoreAPI.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Text;
+using System.Text.Json;
 
 namespace FurnitureStoreAPI.Controllers
 {
@@ -11,9 +13,13 @@ namespace FurnitureStoreAPI.Controllers
     public class ProductsController : ControllerBase
     {
         private readonly AppDbContext _context;
-        public ProductsController(AppDbContext context)
+        private readonly IHttpClientFactory _httpClientFactory;
+        private readonly IConfiguration _config;
+        public ProductsController(AppDbContext context, IHttpClientFactory httpClientFactory, IConfiguration config)
         {
             _context = context;
+            _httpClientFactory = httpClientFactory;
+            _config = config;
         }
 
         private async Task<List<object>> AttachRatingsAsync(List<Product> products)
@@ -53,6 +59,7 @@ namespace FurnitureStoreAPI.Controllers
                     p.Price,
                     p.Description,
                     p.Image,
+                    p.Images,
                     p.Stock,
                     p.IsBestSeller,
                     p.IsActive,
@@ -136,6 +143,221 @@ namespace FurnitureStoreAPI.Controllers
             return Ok(await AttachRatingsAsync(sameCategory));
         }
 
+        // GET: api/products/recommendations?userId=5&cartIds=1,2,3
+        // Gợi ý sản phẩm ở trang Giỏ hàng — GỌI THẬT Gemini (cùng cách ChatController đang
+        // gọi): đưa cho AI toàn bộ danh sách sản phẩm đang bán (kèm ID), lịch sử đã mua (nếu
+        // đăng nhập) và sản phẩm đang trong giỏ, AI trả về ĐÚNG 1 mảng JSON các ID gợi ý.
+        // AI gọi ra mạng ngoài nên có thể chậm/lỗi — nếu vậy, TỰ ĐỘNG rơi về phương án dự
+        // phòng BuildRuleBasedRecommendations (tự tính theo danh mục, không cần AI), để
+        // phần gợi ý ở trang giỏ hàng KHÔNG BAO GIỜ trống trơn hay làm trang bị treo.
+        [HttpGet("recommendations")]
+        public async Task<IActionResult> GetRecommendations([FromQuery] int? userId, [FromQuery] string? cartIds)
+        {
+            const int COUNT = 8;
+
+            var cartProductIds = ParseIds(cartIds);
+            var activeProducts = await _context.Products.Where(p => p.IsActive).ToListAsync();
+
+            List<Product> purchasedProducts = new();
+            if (userId.HasValue)
+            {
+                var purchasedIds = await _context.OrderItems
+                    .Where(oi => oi.Order != null && oi.Order.UserId == userId.Value)
+                    .Select(oi => oi.ProductId)
+                    .Distinct()
+                    .ToListAsync();
+                purchasedProducts = activeProducts.Where(p => purchasedIds.Contains(p.Id)).ToList();
+            }
+
+            var cartProducts = activeProducts.Where(p => cartProductIds.Contains(p.Id)).ToList();
+
+            var aiResult = await TryGetAiRecommendationsAsync(activeProducts, purchasedProducts, cartProducts, cartProductIds, COUNT);
+
+            var result = aiResult.Count > 0
+                ? aiResult
+                : BuildRuleBasedRecommendations(activeProducts, purchasedProducts, cartProducts, cartProductIds, COUNT);
+
+            return Ok(await AttachRatingsAsync(result));
+        }
+
+        private static List<int> ParseIds(string? raw) =>
+            (raw ?? "")
+                .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(s => int.TryParse(s.Trim(), out var n) ? n : (int?)null)
+                .Where(n => n.HasValue)
+                .Select(n => n!.Value)
+                .Distinct()
+                .ToList();
+
+        // Gọi Gemini thật để chọn sản phẩm gợi ý. Trả về danh sách RỖNG (không throw) ở MỌI
+        // trường hợp lỗi — thiếu API key, mất mạng, AI trả JSON hỏng, model chọn toàn ID
+        // không tồn tại... — để nơi gọi (GetRecommendations) biết mà tự chuyển sang phương
+        // án dự phòng theo quy tắc, không để lỗi này làm hỏng cả trang giỏ hàng.
+        private async Task<List<Product>> TryGetAiRecommendationsAsync(
+            List<Product> activeProducts, List<Product> purchasedProducts, List<Product> cartProducts,
+            List<int> cartProductIds, int count)
+        {
+            var apiKey = _config["Gemini:ApiKey"];
+            if (string.IsNullOrWhiteSpace(apiKey)) return new List<Product>();
+            if (activeProducts.Count == 0) return new List<Product>();
+
+            var model = _config["Gemini:Model"];
+            if (string.IsNullOrWhiteSpace(model)) model = "gemini-flash-lite-latest";
+
+            var catalogLines = activeProducts.Select(p =>
+            {
+                var priceAfter = p.Price * (1 - p.DiscountPercent / 100m);
+                return $"ID {p.Id} | {p.Name} | Danh mục: {p.Category} | Giá: {priceAfter:N0}đ | " +
+                       $"Tồn kho: {(p.Stock > 0 ? p.Stock.ToString() : "hết hàng")} | Bán chạy: {(p.IsBestSeller ? "có" : "không")}";
+            });
+
+            var purchasedText = purchasedProducts.Count > 0
+                ? string.Join(", ", purchasedProducts.Select(p => $"{p.Name} (ID {p.Id}, {p.Category})"))
+                : "chưa có (khách vãng lai hoặc chưa từng mua hàng)";
+
+            var cartText = cartProducts.Count > 0
+                ? string.Join(", ", cartProducts.Select(p => $"{p.Name} (ID {p.Id}, {p.Category})"))
+                : "giỏ hàng đang trống";
+
+            var systemPrompt =
+$@"Bạn là hệ thống gợi ý sản phẩm cho cửa hàng nội thất LuxWood. Nhiệm vụ DUY NHẤT: dựa
+trên lịch sử mua hàng và giỏ hàng hiện tại của khách, chọn tối đa {count} sản phẩm PHÙ HỢP
+NHẤT từ danh sách sản phẩm đang bán bên dưới để gợi ý thêm cho khách (bổ trợ, cùng phong
+cách/phòng, hoặc thường được mua kèm nhau).
+
+QUY TẮC BẮT BUỘC:
+- TUYỆT ĐỐI KHÔNG chọn sản phẩm đang có sẵn trong giỏ hàng của khách.
+- Chỉ chọn ID có thật trong danh sách sản phẩm đang bán bên dưới, không bịa ID.
+- Nếu không đủ thông tin để suy luận (khách vãng lai, giỏ trống, chưa có lịch sử), ưu
+  tiên các sản phẩm ""Bán chạy: có"".
+- CHỈ trả lời bằng ĐÚNG 1 mảng JSON các số nguyên là ID sản phẩm, không kèm bất kỳ chữ
+  giải thích, chú thích hay markdown nào khác. Ví dụ hợp lệ: [12,5,7,20]
+
+DANH SÁCH SẢN PHẨM ĐANG BÁN:
+{string.Join("\n", catalogLines)}
+
+LỊCH SỬ ĐÃ MUA CỦA KHÁCH: {purchasedText}
+SẢN PHẨM ĐANG CÓ TRONG GIỎ HÀNG: {cartText}";
+
+            var url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}";
+            var payload = new
+            {
+                systemInstruction = new { parts = new[] { new { text = systemPrompt } } },
+                contents = new[]
+                {
+                    new { role = "user", parts = new[] { new { text = $"Hãy chọn tối đa {count} ID sản phẩm phù hợp nhất, trả về đúng định dạng JSON đã yêu cầu." } } }
+                },
+                // Ép Gemini trả đúng JSON, đỡ phải dò/cắt chữ thừa ở phần xử lý phía dưới.
+                generationConfig = new { responseMimeType = "application/json" },
+            };
+
+            var client = _httpClientFactory.CreateClient();
+            // AI gợi ý là phần BỔ TRỢ cho trang giỏ hàng, không phải nội dung chính — timeout
+            // ngắn để lỡ Gemini chậm cũng không bắt khách chờ lâu, có sẵn phương án dự phòng.
+            client.Timeout = TimeSpan.FromSeconds(12);
+
+            string body;
+            try
+            {
+                var response = await client.PostAsync(
+                    url,
+                    new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"));
+                if (!response.IsSuccessStatusCode) return new List<Product>();
+                body = await response.Content.ReadAsStringAsync();
+            }
+            catch
+            {
+                return new List<Product>();
+            }
+
+            string? text;
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                text = doc.RootElement
+                    .GetProperty("candidates")[0]
+                    .GetProperty("content")
+                    .GetProperty("parts")[0]
+                    .GetProperty("text")
+                    .GetString();
+            }
+            catch
+            {
+                text = null;
+            }
+
+            if (string.IsNullOrWhiteSpace(text)) return new List<Product>();
+
+            List<int> ids;
+            try
+            {
+                // AI đôi khi vẫn kèm chữ thừa dù đã dặn kỹ — cắt lấy đúng đoạn từ "[" tới "]"
+                // đầu tiên tìm được, để việc parse JSON không bị vỡ vì vài ký tự lạc ở 2 đầu.
+                var start = text.IndexOf('[');
+                var end = text.LastIndexOf(']');
+                var jsonPart = (start >= 0 && end > start) ? text.Substring(start, end - start + 1) : text;
+                ids = JsonSerializer.Deserialize<List<int>>(jsonPart) ?? new List<int>();
+            }
+            catch
+            {
+                return new List<Product>();
+            }
+
+            var byId = activeProducts.ToDictionary(p => p.Id);
+            var picked = new List<Product>();
+            foreach (var id in ids)
+            {
+                if (picked.Count >= count) break;
+                // Chặn lại lần nữa cho chắc, phòng khi AI lỡ chọn nhầm sản phẩm đang trong giỏ
+                // dù đã dặn trong prompt.
+                if (cartProductIds.Contains(id)) continue;
+                if (byId.TryGetValue(id, out var product) && !picked.Contains(product))
+                    picked.Add(product);
+            }
+
+            return picked;
+        }
+
+        // Phương án dự phòng KHÔNG dùng AI — dùng khi Gemini lỗi/chậm/trả JSON hỏng. Tự tính
+        // theo danh mục: danh mục từ lịch sử đã mua + danh mục sản phẩm đang trong giỏ, ưu
+        // tiên bán chạy/mới nhất, loại trừ sản phẩm đang có trong giỏ; thiếu thì lấp đầy bằng
+        // sản phẩm bán chạy/mới nhất nói chung.
+        private List<Product> BuildRuleBasedRecommendations(
+            List<Product> activeProducts, List<Product> purchasedProducts, List<Product> cartProducts,
+            List<int> cartProductIds, int count)
+        {
+            var categorySignals = new HashSet<string>();
+            foreach (var p in purchasedProducts) if (!string.IsNullOrEmpty(p.Category)) categorySignals.Add(p.Category);
+            foreach (var p in cartProducts) if (!string.IsNullOrEmpty(p.Category)) categorySignals.Add(p.Category);
+
+            var result = new List<Product>();
+
+            if (categorySignals.Count > 0)
+            {
+                var byCategory = activeProducts
+                    .Where(p => categorySignals.Contains(p.Category) && !cartProductIds.Contains(p.Id))
+                    .OrderByDescending(p => p.IsBestSeller)
+                    .ThenByDescending(p => p.CreatedAt)
+                    .Take(count)
+                    .ToList();
+                result.AddRange(byCategory);
+            }
+
+            if (result.Count < count)
+            {
+                var excludeIds = cartProductIds.Concat(result.Select(p => p.Id)).ToList();
+                var filler = activeProducts
+                    .Where(p => !excludeIds.Contains(p.Id))
+                    .OrderByDescending(p => p.IsBestSeller)
+                    .ThenByDescending(p => p.CreatedAt)
+                    .Take(count - result.Count)
+                    .ToList();
+                result.AddRange(filler);
+            }
+
+            return result;
+        }
+
         [Authorize(Roles = "Admin,Nhân viên")]
         [HttpGet("all")]
         public async Task<IActionResult> GetAll()
@@ -206,6 +428,7 @@ namespace FurnitureStoreAPI.Controllers
             existing.Price = product.Price;
             existing.Description = product.Description;
             existing.Image = product.Image;
+            existing.Images = product.Images;
             existing.Stock = product.Stock;
             existing.IsBestSeller = product.IsBestSeller;
             existing.DiscountPercent = product.DiscountPercent;

@@ -8,6 +8,14 @@
         public decimal Price { get; set; }
         public string Description { get; set; } = string.Empty;
         public string Image { get; set; } = string.Empty;
+
+        // Ảnh phụ — TỐI ĐA 4 ảnh, lưu dạng chuỗi phân tách dấu phẩy "url1,url2,url3"
+        // (giống hệt cách Project.Images đang lưu gallery dự án). Ảnh chính vẫn dùng
+        // riêng field Image ở trên như cũ, không đổi gì — Images chỉ chứa các ảnh PHỤ,
+        // hiện thành cột thumbnail bên trái ảnh chính ở trang chi tiết sản phẩm (Client).
+        // Nullable/rỗng nếu sản phẩm không có ảnh phụ nào (mọi sản phẩm cũ trong DB).
+        public string? Images { get; set; }
+
         public int Stock { get; set; }
         public bool IsBestSeller { get; set; } = false;
         // Sản phẩm còn đang bán hay đã bị ẩn (soft-delete).
