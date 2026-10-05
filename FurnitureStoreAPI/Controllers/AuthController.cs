@@ -178,6 +178,7 @@ namespace FurnitureStoreAPI.Controllers
 
         // GET: api/Auth/me — Lấy thông tin tài khoản đang đăng nhập (dùng cho trang Tài khoản cá nhân)
         // Khác với UsersController (chỉ Admin xem được ai cũng được), endpoint này để CHÍNH CHỦ tự xem của mình.
+        // Có kèm AvatarUrl (ảnh đại diện) và CreatedAt (ngày tham gia) để hiện ở đầu trang Tài khoản và Navbar.
         [Authorize]
         [HttpGet("me")]
         public async Task<IActionResult> Me()
@@ -188,7 +189,7 @@ namespace FurnitureStoreAPI.Controllers
             var user = await _context.Users.FindAsync(userId);
             if (user == null) return NotFound();
 
-            return Ok(new { user.Id, user.Name, user.Email, user.Phone, user.Address, user.Role });
+            return Ok(new { user.Id, user.Name, user.Email, user.Phone, user.Address, user.Role, user.AvatarUrl, user.CreatedAt });
         }
 
         // PUT: api/Auth/me — Cập nhật tên & số điện thoại của chính mình
@@ -211,7 +212,40 @@ namespace FurnitureStoreAPI.Controllers
             user.Address = dto.Address;
             await _context.SaveChangesAsync();
 
-            return Ok(new { user.Id, user.Name, user.Email, user.Phone, user.Address, user.Role });
+            return Ok(new { user.Id, user.Name, user.Email, user.Phone, user.Address, user.Role, user.AvatarUrl, user.CreatedAt });
+        }
+
+        // PUT: api/Auth/me/avatar — Đặt hoặc xoá ảnh đại diện của chính mình.
+        // Luồng: Client tải ảnh lên POST /api/Upload → nhận URL → gọi endpoint này để lưu URL đó.
+        // AvatarUrl rỗng ("") = xoá ảnh. Để tránh bị lợi dụng nhét link ngoài/độc hại vào hồ sơ,
+        // CHỈ chấp nhận URL trỏ về chính thư mục /uploads/ của Backend này (ảnh do UploadController tạo ra).
+        [Authorize]
+        [HttpPut("me/avatar")]
+        public async Task<IActionResult> UpdateAvatar(UpdateAvatarDto dto)
+        {
+            var idClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (!int.TryParse(idClaim, out var userId)) return Unauthorized();
+
+            var user = await _context.Users.FindAsync(userId);
+            if (user == null) return NotFound();
+
+            var url = (dto.AvatarUrl ?? "").Trim();
+            if (url.Length > 0)
+            {
+                var valid = url.Length <= 500
+                    && Uri.TryCreate(url, UriKind.Absolute, out var uri)
+                    && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+                    && string.Equals(uri.Host, Request.Host.Host, StringComparison.OrdinalIgnoreCase)
+                    && uri.AbsolutePath.StartsWith("/uploads/", StringComparison.OrdinalIgnoreCase);
+
+                if (!valid)
+                    return BadRequest(new { message = "Ảnh đại diện không hợp lệ. Vui lòng tải ảnh lên từ máy." });
+            }
+
+            user.AvatarUrl = url;
+            await _context.SaveChangesAsync();
+
+            return Ok(new { user.AvatarUrl });
         }
 
         // PUT: api/Auth/change-password — Đổi mật khẩu, bắt buộc nhập đúng mật khẩu hiện tại trước
@@ -245,5 +279,12 @@ namespace FurnitureStoreAPI.Controllers
 
             return NoContent();
         }
+    }
+
+    // DTO nhỏ cho PUT /api/Auth/me/avatar — để ngay trong file này cho gọn; có thể chuyển sang
+    // thư mục Models/Dtos cùng các DTO khác nếu muốn đồng bộ cách tổ chức.
+    public class UpdateAvatarDto
+    {
+        public string? AvatarUrl { get; set; }
     }
 }

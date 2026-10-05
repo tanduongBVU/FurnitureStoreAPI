@@ -19,6 +19,9 @@
         // qua đăng nhập Google. Dùng để hiển thị UI phù hợp (VD: ẩn form đổi mật khẩu nếu tài
         // khoản chưa từng có mật khẩu) — không dùng để chặn logic nghiệp vụ nào khác.
         public string AuthProvider { get; set; } = "local";
+        // URL ảnh đại diện (do UploadController trả về). Rỗng ("") = chưa có ảnh, giao diện sẽ
+        // hiện chữ cái đầu của tên thay thế. Không dùng null để khớp cách làm của PasswordHash.
+        public string AvatarUrl { get; set; } = string.Empty;
         public DateTime CreatedAt { get; set; } = DateTime.Now;
     }
 }

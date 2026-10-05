@@ -6,10 +6,13 @@ using System.Net.Mail;
 namespace FurnitureStoreAPI.Services
 {
     // Gửi email qua Gmail SMTP dùng System.Net.Mail (có sẵn trong .NET, không cần cài thêm
-    // package ngoài). Mọi lỗi gửi email đều bị NUỐT (catch, chỉ log ra console) — vì email
-    // xác nhận là tính năng PHỤ, không được để lỗi SMTP (mạng chậm, sai App Password, Gmail
-    // chặn...) làm hỏng luồng chính (đặt hàng / đổi trạng thái đơn vẫn phải thành công dù
-    // email gửi thất bại).
+    // package ngoài).
+    //
+    // - SendAsync: mọi lỗi gửi email đều bị NUỐT (catch, chỉ log ra console) — vì email xác nhận
+    //   là tính năng PHỤ, không được để lỗi SMTP (mạng chậm, sai App Password, Gmail chặn...) làm
+    //   hỏng luồng chính (đặt hàng / đổi trạng thái đơn vẫn phải thành công dù email thất bại).
+    // - SendWithResultAsync: cùng cách gửi nhưng TRẢ KẾT QUẢ (thành công/thất bại + lý do), cho các
+    //   chỗ cần báo thật cho người dùng, VD trả lời liên hệ khách hàng.
     public class EmailService : IEmailService
     {
         private readonly EmailSettings _settings;
@@ -20,6 +23,12 @@ namespace FurnitureStoreAPI.Services
         }
 
         public async Task SendAsync(string toEmail, string subject, string htmlBody)
+        {
+            // Bỏ qua kết quả — giữ đúng hành vi cũ: lỗi chỉ được log, không throw.
+            await SendWithResultAsync(toEmail, subject, htmlBody);
+        }
+
+        public async Task<(bool Success, string? Error)> SendWithResultAsync(string toEmail, string subject, string htmlBody)
         {
             try
             {
@@ -39,11 +48,12 @@ namespace FurnitureStoreAPI.Services
                 message.To.Add(toEmail);
 
                 await client.SendMailAsync(message);
+                return (true, null);
             }
             catch (Exception ex)
             {
-                // Chỉ log, không throw — xem lý do ở comment đầu class.
                 Console.WriteLine($"[EmailService] Gửi email thất bại tới {toEmail}: {ex.Message}");
+                return (false, ex.Message);
             }
         }
     }
