@@ -1,4 +1,6 @@
-﻿namespace FurnitureStoreAPI.Models
+﻿using Microsoft.EntityFrameworkCore;
+
+namespace FurnitureStoreAPI.Models
 {
     public class Order
     {
@@ -13,7 +15,20 @@
         public string Phone { get; set; } = string.Empty;
         public string Address { get; set; } = string.Empty;
         public string Status { get; set; } = "Chờ xác nhận";
+        // Số tiền KHÁCH PHẢI TRẢ (đã trừ giảm giá combo và mã giảm giá).
         public decimal Total { get; set; }
+
+        // Số tiền đã giảm nhờ mua COMBO (tổng chênh lệch giữa giá bán lẻ và giá trong combo).
+        // 0 = đơn không có combo giảm giá, và cũng là giá trị của mọi đơn cũ tạo trước khi có cột này.
+        // Tạm tính (trước mọi giảm giá) = Total + BundleDiscount + CouponDiscount.
+        [Precision(18, 2)]
+        public decimal BundleDiscount { get; set; }
+
+
+        // Số tiền đã giảm nhờ MÃ GIẢM GIÁ (CouponCode). 0 = không dùng mã / đơn cũ.
+        [Precision(18, 2)]
+        public decimal CouponDiscount { get; set; }
+
         // Mã giảm giá đã áp dụng cho đơn này (nếu có) — lưu lại để hiện trong lịch sử đơn hàng
         // (MyOrders, Admin OrderDetail). null = đơn hàng không dùng mã giảm giá.
         public string? CouponCode { get; set; }

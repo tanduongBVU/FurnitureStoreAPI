@@ -46,7 +46,10 @@ namespace FurnitureStoreAPI.Controllers
             foreach (var p in products)
                 urls.Add(($"{BaseUrl}/products/{p.Id}", p.CreatedAt.ToString("yyyy-MM-dd")));
 
+            // Chỉ đưa bài ĐÃ ĐĂNG (IsPublished) vào sitemap — bài nháp/đã ẩn không được lộ đường dẫn
+            // cho công cụ tìm kiếm.
             var posts = await _context.BlogPosts
+                .Where(b => b.IsPublished)
                 .Select(b => new { b.Id, b.CreatedAt })
                 .ToListAsync();
 

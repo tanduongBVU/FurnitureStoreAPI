@@ -6,6 +6,7 @@ using Google.Apis.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Collections.Concurrent;
 using System.Security.Claims;
 
 namespace FurnitureStoreAPI.Controllers
@@ -17,11 +18,23 @@ namespace FurnitureStoreAPI.Controllers
         private readonly AppDbContext _context;
         private readonly TokenService _tokenService;
         private readonly IConfiguration _config;
-        public AuthController(AppDbContext context, TokenService tokenService, IConfiguration config)
+        private readonly IEmailService _emailService;
+        private readonly IWebHostEnvironment _env;
+
+        // Thời gian tối thiểu giữa 2 lần gửi email "Quên mật khẩu" cho CÙNG 1 địa chỉ (chống lợi
+        // dụng để spam hộp thư người khác). Lưu trong bộ nhớ — chạy lại API thì xoá, chấp nhận được.
+        private static readonly ConcurrentDictionary<string, DateTime> ForgotPasswordLastSent = new();
+        private const int ForgotPasswordCooldownSeconds = 60;
+        private const int ResetTokenMinutes = 30;
+
+        public AuthController(AppDbContext context, TokenService tokenService, IConfiguration config,
+            IEmailService emailService, IWebHostEnvironment env)
         {
             _context = context;
             _tokenService = tokenService;
             _config = config;
+            _emailService = emailService;
+            _env = env;
         }
 
         // POST: api/Auth/login
@@ -89,6 +102,91 @@ namespace FurnitureStoreAPI.Controllers
                 Email = user.Email,
                 Role = user.Role
             });
+        }
+
+        // POST: api/Auth/forgot-password — công khai, CHỈ dành cho tài khoản KHÁCH HÀNG.
+        // Gửi email chứa link đặt lại mật khẩu (hết hạn sau 30 phút, chỉ dùng được 1 lần).
+        //   - LUÔN trả cùng một câu trả lời dù email có tồn tại hay không, để người lạ không dò
+        //     được email nào đã đăng ký ở LuxWood.
+        //   - Chỉ gửi cho khách hàng đang hoạt động. Tài khoản Admin/Nhân viên không dùng đường này.
+        //   - Email gửi NỀN (không chờ) để thời gian phản hồi không lộ email có tồn tại hay không.
+        //   - Tối đa 1 email / 60 giây cho mỗi địa chỉ.
+        [HttpPost("forgot-password")]
+        public async Task<IActionResult> ForgotPassword(ForgotPasswordDto dto)
+        {
+            const string genericMessage =
+                "Nếu email này đã đăng ký tài khoản, chúng tôi đã gửi hướng dẫn đặt lại mật khẩu. " +
+                "Vui lòng kiểm tra hộp thư (kể cả mục Spam).";
+
+            var email = (dto.Email ?? "").Trim();
+            if (email.Length == 0 || email.Length > 254)
+                return BadRequest(new { message = "Vui lòng nhập email hợp lệ." });
+            try
+            {
+                if (new System.Net.Mail.MailAddress(email).Address != email)
+                    return BadRequest(new { message = "Vui lòng nhập email hợp lệ." });
+            }
+            catch
+            {
+                return BadRequest(new { message = "Vui lòng nhập email hợp lệ." });
+            }
+
+            var key = email.ToLowerInvariant();
+            var now = DateTime.UtcNow;
+            if (ForgotPasswordLastSent.TryGetValue(key, out var last)
+                && (now - last).TotalSeconds < ForgotPasswordCooldownSeconds)
+                return Ok(new { message = genericMessage });
+
+            if (ForgotPasswordLastSent.Count > 1000) ForgotPasswordLastSent.Clear(); // tránh phình bộ nhớ
+            ForgotPasswordLastSent[key] = now;
+
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
+            if (user != null && user.Role == "Khách hàng" && user.Status == "Hoạt động")
+            {
+                var token = _tokenService.CreatePasswordResetToken(user, ResetTokenMinutes);
+                var baseUrl = (_config["App:ClientBaseUrl"] ?? "http://localhost:5173").TrimEnd('/');
+                var link = $"{baseUrl}/reset-password?token={Uri.EscapeDataString(token)}";
+
+                // Khi chạy local (Development) in link ra Console để thử được ngay cả lúc Gmail chưa gửi được.
+                if (_env.IsDevelopment())
+                    Console.WriteLine($"[ForgotPassword] Link đặt lại mật khẩu cho {user.Email}: {link}");
+
+                var subject = "Đặt lại mật khẩu — LuxWood";
+                var html = EmailTemplates.PasswordReset(user.Name, link, ResetTokenMinutes);
+                var toEmail = user.Email;
+                // Gửi nền; EmailService tự bắt mọi lỗi nên không có exception thoát ra ngoài.
+                _ = Task.Run(() => _emailService.SendWithResultAsync(toEmail, subject, html));
+            }
+
+            return Ok(new { message = genericMessage });
+        }
+
+        // POST: api/Auth/reset-password — công khai, đặt mật khẩu mới bằng token trong email.
+        // Token phải: đúng chữ ký, còn hạn, đúng loại (audience riêng), và dấu vân tay mật khẩu
+        // còn khớp (nghĩa là mật khẩu CHƯA bị đổi kể từ lúc tạo token → mỗi link chỉ dùng được 1 lần).
+        [HttpPost("reset-password")]
+        public async Task<IActionResult> ResetPassword(ResetPasswordDto dto)
+        {
+            const string invalidLink = "Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn. Vui lòng yêu cầu gửi lại.";
+
+            if (string.IsNullOrWhiteSpace(dto.NewPassword) || dto.NewPassword.Length < 6)
+                return BadRequest(new { message = "Mật khẩu mới phải có ít nhất 6 ký tự!" });
+
+            var info = _tokenService.ValidatePasswordResetToken(dto.Token ?? "");
+            if (info == null)
+                return BadRequest(new { message = invalidLink });
+
+            var user = await _context.Users.FindAsync(info.Value.UserId);
+            if (user == null
+                || user.Role != "Khách hàng"
+                || user.Status != "Hoạt động"
+                || TokenService.PasswordFingerprint(user) != info.Value.Fingerprint)
+                return BadRequest(new { message = invalidLink });
+
+            user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.NewPassword);
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = "Đặt lại mật khẩu thành công! Bạn có thể đăng nhập bằng mật khẩu mới." });
         }
 
         // POST: api/Auth/google
@@ -286,5 +384,17 @@ namespace FurnitureStoreAPI.Controllers
     public class UpdateAvatarDto
     {
         public string? AvatarUrl { get; set; }
+    }
+
+    // DTO cho luồng Quên mật khẩu (xem ForgotPassword / ResetPassword ở trên).
+    public class ForgotPasswordDto
+    {
+        public string? Email { get; set; }
+    }
+
+    public class ResetPasswordDto
+    {
+        public string? Token { get; set; }
+        public string? NewPassword { get; set; }
     }
 }

@@ -77,5 +77,30 @@ namespace FurnitureStoreAPI.Services
 
             return Wrap($"Cập nhật đơn hàng #{order.Id}", body);
         }
+
+        // Email "Quên mật khẩu": nút dẫn tới trang đặt lại mật khẩu của website (link có hạn).
+        public static string PasswordReset(string customerName, string resetLink, int expiresMinutes)
+        {
+            var name = System.Net.WebUtility.HtmlEncode(customerName);
+            var link = System.Net.WebUtility.HtmlEncode(resetLink);
+
+            var body = $@"
+<p style=""color:#7a6a58;font-size:14px;line-height:1.6;"">
+  Chào <strong>{name}</strong>, chúng tôi nhận được yêu cầu đặt lại mật khẩu cho tài khoản LuxWood của bạn.
+  Bấm nút bên dưới để chọn mật khẩu mới. Liên kết có hiệu lực trong <strong>{expiresMinutes} phút</strong> và chỉ dùng được một lần.
+</p>
+<div style=""text-align:center;margin:24px 0;"">
+  <a href=""{link}"" style=""display:inline-block;background:#a8854a;color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 28px;border-radius:8px;"">Đặt lại mật khẩu</a>
+</div>
+<p style=""color:#7a6a58;font-size:12px;line-height:1.6;margin:0 0 8px;"">
+  Nếu nút không bấm được, hãy sao chép liên kết sau vào trình duyệt:<br/>
+  <span style=""word-break:break-all;color:#a8854a;"">{link}</span>
+</p>
+<p style=""color:#7a6a58;font-size:12px;line-height:1.6;margin:0;"">
+  Nếu bạn <strong>không</strong> yêu cầu việc này, hãy bỏ qua email — mật khẩu của bạn vẫn giữ nguyên.
+</p>";
+
+            return Wrap("Đặt lại mật khẩu", body);
+        }
     }
 }

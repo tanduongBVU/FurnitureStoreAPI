@@ -89,8 +89,8 @@ namespace FurnitureStoreAPI.Controllers
             return NoContent();
         }
 
-        // DELETE: api/services/5 — soft-delete (giống Product), CHỈ Admin
-        [Authorize(Roles = "Admin")]
+        // DELETE: api/services/5 — soft-delete (giống Product), Admin & Nhân viên đều được ẩn
+        [Authorize(Roles = "Admin,Nhân viên")]
         [HttpDelete("{id}")]
         public async Task<IActionResult> Delete(int id)
         {
@@ -102,8 +102,8 @@ namespace FurnitureStoreAPI.Controllers
             return NoContent();
         }
 
-        // PATCH: api/services/5/restore — CHỈ Admin
-        [Authorize(Roles = "Admin")]
+        // PATCH: api/services/5/restore — Admin & Nhân viên
+        [Authorize(Roles = "Admin,Nhân viên")]
         [HttpPatch("{id}/restore")]
         public async Task<IActionResult> Restore(int id)
         {

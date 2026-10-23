@@ -85,8 +85,8 @@ namespace FurnitureStoreAPI.Controllers
 
         // DELETE: api/blogposts/5
         // Xoá hẳn khỏi DB — khác với Products, không có đơn hàng nào tham chiếu tới bài viết
-        // nên không cần soft-delete. CHỈ Admin được xoá.
-        [Authorize(Roles = "Admin")]
+        // nên không cần soft-delete. Admin & Nhân viên đều được xoá.
+        [Authorize(Roles = "Admin,Nhân viên")]
         [HttpDelete("{id}")]
         public async Task<IActionResult> Delete(int id)
         {

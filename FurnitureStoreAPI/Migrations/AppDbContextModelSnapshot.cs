@@ -202,26 +202,6 @@ namespace FurnitureStoreAPI.Migrations
                     b.ToTable("Coupons");
                 });
 
-            modelBuilder.Entity("FurnitureStoreAPI.Models.NewsletterSubscriber", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("Email")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("NewsletterSubscribers");
-                });
-
             modelBuilder.Entity("FurnitureStoreAPI.Models.Order", b =>
                 {
                     b.Property<int>("Id")
@@ -234,8 +214,14 @@ namespace FurnitureStoreAPI.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<decimal>("BundleDiscount")
+                        .HasColumnType("decimal(18,2)");
+
                     b.Property<string>("CouponCode")
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<decimal>("CouponDiscount")
+                        .HasColumnType("decimal(18,2)");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
@@ -336,6 +322,9 @@ namespace FurnitureStoreAPI.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("DetailContent")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<int>("DiscountPercent")
                         .HasColumnType("int");
 
@@ -400,60 +389,6 @@ namespace FurnitureStoreAPI.Migrations
                     b.HasIndex("ProductId");
 
                     b.ToTable("ProductVariants");
-                });
-
-            modelBuilder.Entity("FurnitureStoreAPI.Models.Project", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("Category")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("Content")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("CoverImage")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<int>("DisplayOrder")
-                        .HasColumnType("int");
-
-                    b.Property<string>("Images")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("bit");
-
-                    b.Property<string>("Location")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("ShortDescription")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("Title")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("Year")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("Projects");
                 });
 
             modelBuilder.Entity("FurnitureStoreAPI.Models.Review", b =>

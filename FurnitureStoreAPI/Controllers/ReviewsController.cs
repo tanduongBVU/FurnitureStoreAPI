@@ -77,8 +77,9 @@ namespace FurnitureStoreAPI.Controllers
             return Ok(new { canReview = true, reason = "" });
         }
 
-        // POST: api/reviews — khách hàng đã đăng nhập gửi đánh giá.
-        // Server tự kiểm tra lại điều kiện (đã mua + chưa review), không tin dữ liệu từ client.
+        // POST: api/reviews — khách hàng đã đăng nhập gửi đánh giá, trạng thái CHỜ DUYỆT (IsApproved = false).
+        // Server tự kiểm tra: đã đăng nhập, đã mua và nhận hàng thành công, mỗi khách chỉ đánh giá 1 lần cho mỗi
+        // sản phẩm, số sao 1-5, nội dung tối đa 1000 ký tự. Không tin dữ liệu từ client.
         [Authorize]
         [HttpPost]
         public async Task<IActionResult> Create([FromBody] CreateReviewDto dto)
@@ -88,6 +89,10 @@ namespace FurnitureStoreAPI.Controllers
 
             if (dto.Rating < 1 || dto.Rating > 5)
                 return BadRequest(new { message = "Số sao đánh giá phải từ 1 đến 5!" });
+
+            var comment = (dto.Comment ?? "").Trim();
+            if (comment.Length > 1000)
+                return BadRequest(new { message = "Nhận xét tối đa 1000 ký tự." });
 
             var user = await _context.Users.FindAsync(userId);
             if (user == null) return Unauthorized();
@@ -107,8 +112,8 @@ namespace FurnitureStoreAPI.Controllers
                 UserId = userId.Value,
                 UserName = user.Name,
                 Rating = dto.Rating,
-                Comment = (dto.Comment ?? "").Trim(),
-                IsApproved = false,
+                Comment = comment,
+                IsApproved = false, // chờ Admin/Nhân viên duyệt mới hiện công khai
                 CreatedAt = DateTime.Now,
             };
             _context.Reviews.Add(review);
@@ -235,11 +240,11 @@ namespace FurnitureStoreAPI.Controllers
             var product = await _context.Products.FindAsync(productId);
             var productName = product?.Name ?? $"Sản phẩm #{productId}";
 
-            var approved = await _context.Reviews
+            var all = await _context.Reviews
                 .Where(r => r.ProductId == productId && r.IsApproved)
                 .ToListAsync();
 
-            var withComment = approved
+            var withComment = all
                 .Where(r => !string.IsNullOrWhiteSpace(r.Comment))
                 .OrderByDescending(r => r.CreatedAt)
                 .Take(40)
@@ -248,12 +253,12 @@ namespace FurnitureStoreAPI.Controllers
             if (withComment.Count < 3)
                 return BadRequest(new { message = "Cần ít nhất 3 đánh giá đã duyệt có nội dung để AI phân tích." });
 
-            var avg = approved.Average(r => (double)r.Rating);
-            var lowCount = approved.Count(r => r.Rating <= 2);
+            var avg = all.Average(r => (double)r.Rating);
+            var lowCount = all.Count(r => r.Rating <= 2);
 
             var sb = new StringBuilder();
             sb.AppendLine($"Sản phẩm: {productName}");
-            sb.AppendLine($"Số liệu hệ thống: {approved.Count} đánh giá đã duyệt, điểm trung bình {avg:0.0}/5, {lowCount} đánh giá 1-2 sao.");
+            sb.AppendLine($"Số liệu hệ thống: {all.Count} đánh giá đã duyệt, điểm trung bình {avg:0.0}/5, {lowCount} đánh giá 1-2 sao.");
             sb.AppendLine("<danh_sach_danh_gia>");
             foreach (var r in withComment)
                 sb.AppendLine($"- {r.Rating} sao: {Clean(r.Comment, 300)}");

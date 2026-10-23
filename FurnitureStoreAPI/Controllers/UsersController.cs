@@ -9,11 +9,20 @@ namespace FurnitureStoreAPI.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
-    // Toàn bộ controller này chỉ dành cho Admin quản lý tài khoản nội bộ
-    // (Admin / Nhân viên). Khách hàng tự đăng ký phải dùng POST /api/Auth/register.
+    // Toàn bộ controller này chỉ dành cho Admin quản lý tài khoản.
+    //
+    // QUY TẮC VỚI KHÁCH HÀNG:
+    //   - Khách hàng TỰ ĐĂNG KÝ qua website (POST /api/Auth/register) và tự quản lý thông tin
+    //     cá nhân của mình ở trang Tài khoản.
+    //   - Admin KHÔNG được sửa thông tin khách hàng và KHÔNG được đặt lại mật khẩu của khách
+    //     (nếu được, Admin có thể tự đăng nhập bằng tài khoản khách mà khách không hề biết).
+    //     Admin chỉ được XEM và KHOÁ / MỞ KHOÁ. Khách tự đặt lại mật khẩu của mình.
+    //   - Admin chỉ tạo/sửa tài khoản NỘI BỘ (Admin / Nhân viên).
     [Authorize(Roles = "Admin")]
     public class UsersController : ControllerBase
     {
+        private const string ROLE_CUSTOMER = "Khách hàng";
+
         private readonly AppDbContext _context;
         public UsersController(AppDbContext context) { _context = context; }
 
@@ -44,7 +53,7 @@ namespace FurnitureStoreAPI.Controllers
         }
 
         // GET: api/users/5
-        // LƯU Ý: chỉ trả về các field cần cho form Sửa — KHÔNG trả PasswordHash
+        // LƯU Ý: chỉ trả về các field cần cho trang Xem/Sửa — KHÔNG trả PasswordHash
         // (dù đã hash, vẫn không nên đưa hash mật khẩu ra ngoài client nếu không cần thiết).
         [HttpGet("{id}")]
         public async Task<IActionResult> GetById(int id)
@@ -66,10 +75,14 @@ namespace FurnitureStoreAPI.Controllers
         }
 
         // POST: api/users
-        // Admin dùng để tạo tài khoản Admin/Nhân viên khác trong nội bộ.
+        // Admin dùng để tạo tài khoản NỘI BỘ (Admin / Nhân viên). Khách hàng phải tự đăng ký
+        // trên website nên KHÔNG được tạo ở đây.
         [HttpPost]
         public async Task<IActionResult> Create(User user)
         {
+            if (user.Role != "Admin" && user.Role != "Nhân viên")
+                return BadRequest(new { message = "Chỉ được tạo tài khoản Nhân viên hoặc Admin. Khách hàng tự đăng ký trên website!" });
+
             if (await _context.Users.AnyAsync(u => u.Email == user.Email))
                 return BadRequest(new { message = "Email đã tồn tại!" });
 
@@ -86,13 +99,22 @@ namespace FurnitureStoreAPI.Controllers
             return CreatedAtAction(nameof(GetById), new { id = user.Id }, user);
         }
 
-        // PUT: api/users/5
+        // PUT: api/users/5 — sửa thông tin tài khoản NỘI BỘ (Admin / Nhân viên).
+        // Tài khoản KHÁCH HÀNG bị chặn hoàn toàn (403): thông tin khách do chính khách quản lý.
+        // Phải chặn ở đây chứ không chỉ ẩn nút ở giao diện, vì vẫn có thể gọi thẳng API.
         [HttpPut("{id}")]
         public async Task<IActionResult> Update(int id, User user)
         {
             if (id != user.Id) return BadRequest();
             var existing = await _context.Users.FindAsync(id);
             if (existing == null) return NotFound();
+
+            if (existing.Role == ROLE_CUSTOMER)
+                return StatusCode(403, new
+                {
+                    message = "Admin không được sửa thông tin của khách hàng. Chỉ có thể xem, khoá/mở khoá hoặc đặt lại mật khẩu."
+                });
+
             existing.Name = user.Name;
             existing.Phone = user.Phone;
             existing.Role = user.Role;
@@ -101,7 +123,7 @@ namespace FurnitureStoreAPI.Controllers
             return NoContent();
         }
 
-        // PATCH: api/users/5/status  — khoá/mở khoá nhanh
+        // PATCH: api/users/5/status  — khoá/mở khoá nhanh (áp dụng cả với khách hàng)
         // Chặn: (1) tự khoá chính tài khoản đang đăng nhập, (2) khoá nốt Admin đang hoạt động cuối cùng.
         [HttpPatch("{id}/status")]
         public async Task<IActionResult> ToggleStatus(int id, [FromBody] string status)
@@ -129,8 +151,9 @@ namespace FurnitureStoreAPI.Controllers
             return NoContent();
         }
 
-        // PATCH: api/users/5/reset-password
-        // Admin đặt lại mật khẩu mới cho 1 user khác (VD: khi họ quên mật khẩu).
+        // PATCH: api/users/5/reset-password — CHỈ áp dụng cho tài khoản NỘI BỘ (Admin / Nhân viên).
+        // Tài khoản KHÁCH HÀNG bị chặn (403): Admin không được tự đặt mật khẩu của khách.
+        // Admin đặt lại mật khẩu mới cho 1 tài khoản nội bộ khác.
         // KHÔNG dùng chung với PUT Update vì đây là hành động nhạy cảm, tách riêng cho rõ log/quyền.
         [HttpPatch("{id}/reset-password")]
         public async Task<IActionResult> ResetPassword(int id, [FromBody] string newPassword)
@@ -140,6 +163,12 @@ namespace FurnitureStoreAPI.Controllers
 
             var user = await _context.Users.FindAsync(id);
             if (user == null) return NotFound();
+
+            if (user.Role == ROLE_CUSTOMER)
+                return StatusCode(403, new
+                {
+                    message = "Admin không được đặt lại mật khẩu của khách hàng. Khách hàng tự đặt lại mật khẩu của mình."
+                });
 
             user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
             await _context.SaveChangesAsync();

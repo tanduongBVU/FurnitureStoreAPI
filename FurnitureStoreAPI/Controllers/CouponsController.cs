@@ -32,7 +32,7 @@ namespace FurnitureStoreAPI.Controllers
             return (true, "", coupon);
         }
 
-        // GET: api/coupons — Admin & Nhân viên xem danh sách quản lý
+        // GET: api/coupons — Admin & Nhân viên xem danh sách quản lý mã giảm giá.
         [Authorize(Roles = "Admin,Nhân viên")]
         [HttpGet]
         public async Task<IActionResult> GetAll()
@@ -63,8 +63,8 @@ namespace FurnitureStoreAPI.Controllers
             });
         }
 
-        // POST: api/coupons — CHỈ Admin được tạo mã mới
-        [Authorize(Roles = "Admin")]
+        // POST: api/coupons — Admin & Nhân viên được tạo mã mới
+        [Authorize(Roles = "Admin,Nhân viên")]
         [HttpPost]
         public async Task<IActionResult> Create(Coupon coupon)
         {
@@ -85,8 +85,8 @@ namespace FurnitureStoreAPI.Controllers
             return Ok(coupon);
         }
 
-        // PUT: api/coupons/5 — CHỈ Admin được sửa mã
-        [Authorize(Roles = "Admin")]
+        // PUT: api/coupons/5 — Admin & Nhân viên được sửa mã
+        [Authorize(Roles = "Admin,Nhân viên")]
         [HttpPut("{id}")]
         public async Task<IActionResult> Update(int id, Coupon coupon)
         {
@@ -109,8 +109,8 @@ namespace FurnitureStoreAPI.Controllers
             return NoContent();
         }
 
-        // DELETE: api/coupons/5 — CHỈ Admin
-        [Authorize(Roles = "Admin")]
+        // DELETE: api/coupons/5 — Admin & Nhân viên
+        [Authorize(Roles = "Admin,Nhân viên")]
         [HttpDelete("{id}")]
         public async Task<IActionResult> Delete(int id)
         {

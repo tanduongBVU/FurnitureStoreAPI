@@ -14,10 +14,10 @@ namespace FurnitureStoreAPI.Data
         public DbSet<SiteSetting> SiteSettings { get; set; }   // ← dòng mới thêm
         public DbSet<BlogPost> BlogPosts { get; set; }
         public DbSet<Review> Reviews { get; set; }
-        public DbSet<NewsletterSubscriber> NewsletterSubscribers { get; set; } // ← dòng mới thêm
+        
         public DbSet<Coupon> Coupons { get; set; }
         public DbSet<Service> Services { get; set; }
-        public DbSet<Project> Projects { get; set; }
+        
         public DbSet<Bundle> Bundles { get; set; }
         public DbSet<BundleItem> BundleItems { get; set; }
         public DbSet<ProductVariant> ProductVariants { get; set; }   // ← dòng mới thêm

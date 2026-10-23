@@ -16,6 +16,13 @@
         // Nullable/rỗng nếu sản phẩm không có ảnh phụ nào (mọi sản phẩm cũ trong DB).
         public string? Images { get; set; }
 
+        // "Thông tin chi tiết" của sản phẩm — nội dung HTML do Admin/Nhân viên soạn bằng trình soạn
+        // thảo (chữ định dạng, bảng thông số, ảnh, link...), hiện ở mục riêng trên trang chi tiết
+        // sản phẩm (Client). Tách riêng khỏi Description (mô tả ngắn, chữ thuần). Nullable/rỗng nếu
+        // sản phẩm chưa có (mọi sản phẩm cũ) — khi đó Client ẩn hẳn mục này. Chỉ trả ra ở endpoint chi tiết
+        // (GetById) và danh sách của Admin, KHÔNG nằm trong các danh sách công khai để các danh sách không bị nặng.
+        public string? DetailContent { get; set; }
+
         public int Stock { get; set; }
         public bool IsBestSeller { get; set; } = false;
         // Sản phẩm còn đang bán hay đã bị ẩn (soft-delete).

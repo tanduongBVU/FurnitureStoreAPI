@@ -10,8 +10,9 @@ namespace FurnitureStoreAPI.Controllers
     // Endpoint riêng phục vụ trang Dashboard (Admin): (1) nhận xét nhanh bằng AI,
     // (2) gợi ý hành động bằng AI. KHÔNG dùng AI để TÍNH số liệu — số liệu tính bằng code C#
     // từ DB, AI chỉ đọc số đã tính sẵn rồi viết nhận xét/gợi ý, để không có rủi ro AI bịa số.
-    // [Authorize] giống AdminChatController — chỉ tài khoản đã đăng nhập mới gọi được.
-    [Authorize]
+    // CHỈ Admin (giám đốc) được gọi — các endpoint này trả số liệu doanh thu và nhận xét AI,
+    // nhân viên không được xem. (Chặn thật ở Backend, không chỉ ẩn trên giao diện.)
+    [Authorize(Roles = "Admin")]
     [ApiController]
     [Route("api/[controller]")]
     public class DashboardController : ControllerBase

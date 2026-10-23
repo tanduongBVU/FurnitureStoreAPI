@@ -1,5 +1,6 @@
 ﻿using FurnitureStoreAPI.Data;
 using FurnitureStoreAPI.Models;
+using FurnitureStoreAPI.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -32,9 +33,16 @@ namespace FurnitureStoreAPI.Controllers
         }
 
         // Gộp thông tin sản phẩm thật (tên/ảnh/giá HIỆN TẠI) vào từng dòng combo, và tự
-        // tính sẵn Subtotal (tổng giá gốc từng món cộng lại) + FinalPrice (sau khi áp thêm
-        // DiscountPercent của combo) — để Client không phải tự tính lại, tránh sai lệch
-        // nếu công thức tính giá đổi sau này (chỉ cần sửa đúng 1 chỗ ở đây).
+        // tính sẵn Subtotal (tổng giá bán từng món cộng lại) + FinalPrice (giá combo sau khi
+        // áp thêm DiscountPercent) — để Client không phải tự tính lại.
+        //
+        // GIÁ: dùng PricingHelper (dùng chung với OrdersController). FinalPrice = tổng của
+        // ComboUnitPrice x số lượng từng dòng, nên ĐÚNG BẰNG số tiền đơn hàng sẽ tính.
+        //
+        // TỒN KHO: mỗi dòng có thêm ProductStock + InStock (đủ số lượng combo cần không), và cả combo có
+        // IsAvailable (mọi sản phẩm đều đủ hàng và còn đang bán), OutOfStockItems (tên các sản phẩm đang
+        // thiếu hàng) và MaxQuantity (mua tối đa được bao nhiêu combo với tồn kho hiện tại). Client dùng
+        // để báo "hết hàng" và chặn thêm vào giỏ.
         private async Task<List<object>> AttachDetailsAsync(List<Bundle> bundles)
         {
             if (bundles.Count == 0) return new List<object>();
@@ -52,22 +60,33 @@ namespace FurnitureStoreAPI.Controllers
                 var itemDtos = bundleItems.Select(i =>
                 {
                     var p = i.Product;
-                    // Dùng giá BÁN THẬT của từng sản phẩm (đã trừ khuyến mãi riêng của nó,
-                    // nếu có) làm gốc, rồi combo mới áp thêm % giảm của riêng combo lên trên.
-                    var unitPrice = p != null ? p.Price * (1 - p.DiscountPercent / 100m) : 0;
+                    var unitPrice = p != null ? PricingHelper.SaleUnitPrice(p) : 0m;
+                    var comboUnitPrice = p != null ? PricingHelper.ComboUnitPrice(p, b.DiscountPercent) : 0m;
+                    var stock = p?.Stock ?? 0;
+                    var inStock = p != null && p.IsActive && stock >= i.Quantity;
                     return new
                     {
                         i.ProductId,
                         ProductName = p?.Name ?? "(Sản phẩm đã bị xoá)",
                         ProductImage = p?.Image,
                         ProductPrice = unitPrice,
+                        ComboUnitPrice = comboUnitPrice,
                         i.Quantity,
                         LineTotal = unitPrice * i.Quantity,
+                        ComboLineTotal = comboUnitPrice * i.Quantity,
+                        ProductStock = stock,
+                        InStock = inStock,
                     };
                 }).ToList();
 
                 var subtotal = itemDtos.Sum(i => i.LineTotal);
-                var finalPrice = Math.Round(subtotal * (1 - b.DiscountPercent / 100m), 0);
+                var finalPrice = itemDtos.Sum(i => i.ComboLineTotal);
+
+                var outOfStockNames = itemDtos.Where(i => !i.InStock).Select(i => i.ProductName).ToList();
+                var isAvailable = itemDtos.Count > 0 && outOfStockNames.Count == 0;
+                var maxQuantity = itemDtos.Count == 0
+                    ? 0
+                    : itemDtos.Min(i => i.Quantity > 0 ? i.ProductStock / i.Quantity : 0);
 
                 return (object)new
                 {
@@ -80,6 +99,9 @@ namespace FurnitureStoreAPI.Controllers
                     b.CreatedAt,
                     Subtotal = subtotal,
                     FinalPrice = finalPrice,
+                    IsAvailable = isAvailable,
+                    OutOfStockItems = outOfStockNames,
+                    MaxQuantity = maxQuantity,
                     Items = itemDtos,
                 };
             }).ToList();
@@ -187,8 +209,8 @@ namespace FurnitureStoreAPI.Controllers
             return NoContent();
         }
 
-        // DELETE: api/bundles/5 — soft-delete, giống pattern Product. CHỈ Admin.
-        [Authorize(Roles = "Admin")]
+        // DELETE: api/bundles/5 — soft-delete, giống pattern Product. Admin & Nhân viên đều được ẩn.
+        [Authorize(Roles = "Admin,Nhân viên")]
         [HttpDelete("{id}")]
         public async Task<IActionResult> Delete(int id)
         {
@@ -199,8 +221,8 @@ namespace FurnitureStoreAPI.Controllers
             return NoContent();
         }
 
-        // PATCH: api/bundles/5/restore — CHỈ Admin.
-        [Authorize(Roles = "Admin")]
+        // PATCH: api/bundles/5/restore — Admin & Nhân viên.
+        [Authorize(Roles = "Admin,Nhân viên")]
         [HttpPatch("{id}/restore")]
         public async Task<IActionResult> Restore(int id)
         {

@@ -14,12 +14,13 @@ namespace FurnitureStoreAPI.Controllers
 
     // Trợ lý AI RIÊNG cho Admin — khác hẳn ChatController (dành cho khách hàng ở Client).
     // Controller này tự truy vấn DB thật mỗi lần Admin hỏi, đóng gói thành 1 bản tóm tắt số
-    // liệu TOÀN DIỆN (đơn hàng, sản phẩm, combo, mã giảm giá, dịch vụ, dự án, blog, đánh giá,
+    // liệu TOÀN DIỆN (đơn hàng, sản phẩm, combo, mã giảm giá, dịch vụ, blog, đánh giá,
     // người dùng, liên hệ), rồi mới gửi kèm câu hỏi cho Gemini — nhờ vậy AI trả lời DỰA TRÊN
     // SỐ LIỆU THẬT thay vì bịa, và luôn cập nhật (không lưu cache).
-    // [Authorize] — chỉ tài khoản đã đăng nhập mới hỏi được, vì nội dung có thể chứa số liệu
-    // kinh doanh nhạy cảm. Đổi thành [Authorize(Roles = "Admin")] nếu cần giới hạn chặt hơn.
-    [Authorize]
+    // [Authorize(Roles = "Admin")] — CHỈ Admin (giám đốc) được hỏi, vì nội dung chứa số liệu
+    // kinh doanh nhạy cảm (doanh thu, mã giảm giá, người dùng...). Nhân viên không có quyền này;
+    // bong bóng chat cũng đã được ẩn với nhân viên ở AdminLayout.jsx.
+    [Authorize(Roles = "Admin")]
     [ApiController]
     [Route("api/[controller]")]
     public class AdminChatController : ControllerBase
@@ -152,7 +153,6 @@ liệt kê, dùng số thứ tự kiểu “1. ”, “2. ” hoặc xuống dò
             var bundles = await _db.Bundles.Include(b => b.Items).ToListAsync();
             var coupons = await _db.Coupons.ToListAsync();
             var services = await _db.Services.ToListAsync();
-            var projects = await _db.Projects.ToListAsync();
             var blogPosts = await _db.BlogPosts.ToListAsync();
             var reviews = await _db.Reviews.ToListAsync();
             var users = await _db.Users.ToListAsync();
@@ -200,10 +200,15 @@ liệt kê, dùng số thứ tự kiểu “1. ”, “2. ” hoặc xuống dò
             var expiredOrUsedUpCoupons = coupons.Where(c => c.IsActive && !activeCoupons.Contains(c)).ToList();
 
             var activeServices = services.Where(s => s.IsActive).ToList();
-            var activeProjects = projects.Where(p => p.IsActive).ToList();
             var publishedPosts = blogPosts.Where(b => b.IsPublished).ToList();
             var draftPosts = blogPosts.Where(b => !b.IsPublished).ToList();
-            var pendingReviews = reviews.Where(r => !r.IsApproved).ToList();
+
+            // Đánh giá hiện công khai NGAY khi khách gửi, không còn kiểm duyệt → không có khái niệm "chờ duyệt".
+            // Thay vào đó cho AI biết điểm trung bình và các đánh giá thấp (1-2 sao) gần đây để Admin hỏi được.
+            var avgRating = reviews.Count > 0 ? reviews.Average(r => (double)r.Rating) : 0;
+            var lowReviews = reviews.Where(r => r.Rating <= 2).OrderByDescending(r => r.CreatedAt).ToList();
+            var recentLowReviews = lowReviews.Take(5).ToList();
+            var productNameById = products.ToDictionary(p => p.Id, p => p.Name);
 
             var usersByRole = users.GroupBy(u => u.Role).ToDictionary(g => g.Key, g => g.Count());
             var newUsersThisMonth = users.Count(u => u.CreatedAt >= startOfThisMonth);
@@ -277,13 +282,18 @@ liệt kê, dùng số thứ tự kiểu “1. ”, “2. ” hoặc xuống dò
             sb.AppendLine($"- Thiết kế: {activeServices.Count(s => s.Type == "thiet-ke")} dịch vụ");
             sb.AppendLine();
 
-            sb.AppendLine($"DỰ ÁN: {activeProjects.Count} dự án đang hiển thị (tổng {projects.Count} kể cả đã ẩn)");
-            sb.AppendLine();
-
             sb.AppendLine($"CẨM NANG (BLOG): {publishedPosts.Count} bài đã đăng, {draftPosts.Count} bài nháp/đã ẩn");
             sb.AppendLine();
 
-            sb.AppendLine($"ĐÁNH GIÁ SẢN PHẨM: {pendingReviews.Count} đánh giá đang CHỜ DUYỆT (chưa hiện công khai), tổng {reviews.Count} đánh giá");
+            sb.AppendLine($"ĐÁNH GIÁ SẢN PHẨM: tổng {reviews.Count} đánh giá" +
+                (reviews.Count > 0 ? $", điểm trung bình {avgRating:0.0}/5" : "") +
+                $", trong đó {lowReviews.Count} đánh giá 1-2 sao. Đánh giá của khách hiện công khai NGAY khi gửi (không qua duyệt).");
+            if (recentLowReviews.Count > 0)
+            {
+                sb.AppendLine("- Đánh giá 1-2 sao gần đây nhất (tối đa 5):");
+                foreach (var r in recentLowReviews)
+                    sb.AppendLine($"  + {productNameById.GetValueOrDefault(r.ProductId, $"SP #{r.ProductId}")} — {r.Rating} sao — {r.UserName}: \"{TruncateMsg(r.Comment ?? "", 60)}\" — {r.CreatedAt:dd/MM}");
+            }
             sb.AppendLine();
 
             sb.AppendLine($"NGƯỜI DÙNG: {users.Count} tài khoản (mới đăng ký tháng này: {newUsersThisMonth})");
