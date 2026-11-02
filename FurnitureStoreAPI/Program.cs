@@ -233,6 +233,16 @@ app.UseAuthentication();
 
 
 // =====================================================
+// KIỂM TRA TÀI KHOẢN CÒN HOẠT ĐỘNG
+// =====================================================
+
+// Mỗi request đã đăng nhập đều kiểm tra lại Status/Role trong database: tài khoản vừa bị khoá,
+// bị xoá hoặc bị đổi quyền sẽ nhận 401 ngay (không đợi token hết hạn). PHẢI nằm SAU
+// UseAuthentication (để đã biết người dùng là ai) và TRƯỚC UseAuthorization.
+app.UseMiddleware<FurnitureStoreAPI.Middleware.ActiveUserMiddleware>();
+
+
+// =====================================================
 // AUTHORIZATION
 // =====================================================
 

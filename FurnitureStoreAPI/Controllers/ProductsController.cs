@@ -134,7 +134,7 @@ namespace FurnitureStoreAPI.Controllers
             const int RELATED_COUNT = 4;
 
             var product = await _context.Products.FindAsync(id);
-            if (product == null) return NotFound();
+            if (product == null || (!product.IsActive && !IsStaff())) return NotFound();
 
             var sameCategory = await _context.Products
                 .Where(p => p.IsActive && p.Id != id && p.Category == product.Category)
@@ -475,6 +475,37 @@ KHÁCH ĐÃ MUA: {purchasedText}
             return null;
         }
 
+        // Người gọi có phải Admin / Nhân viên không (token gửi kèm thì User đã được nhận diện, kể cả ở
+        // endpoint công khai). Dùng để chỉ cho nhân sự nội bộ xem sản phẩm đang bị ẩn.
+        private bool IsStaff() => User.IsInRole("Admin") || User.IsInRole("Nhân viên");
+
+        // Kiểm tra dữ liệu sản phẩm ở Backend (giao diện cũng kiểm tra, nhưng gọi thẳng API thì không qua đó).
+        // Trả câu báo lỗi, hoặc null nếu hợp lệ. Gọi SAU khi đã Trim tên.
+        private static string? ValidateProduct(Product p)
+        {
+            if (p.Name.Length < 2 || p.Name.Length > 200)
+                return "Tên sản phẩm phải từ 2 đến 200 ký tự.";
+            if (p.Price <= 0)
+                return "Giá sản phẩm phải lớn hơn 0.";
+            if (p.Stock < 0)
+                return "Tồn kho không được âm.";
+            if (p.DiscountPercent < 0 || p.DiscountPercent > 100)
+                return "Giảm giá phải từ 0 đến 100%.";
+
+            var variants = p.Variants.ToList();
+            for (var i = 0; i < variants.Count; i++)
+            {
+                var v = variants[i];
+                if (v.Price <= 0)
+                    return $"Biến thể {i + 1}: giá phải lớn hơn 0.";
+                if (v.Stock < 0)
+                    return $"Biến thể {i + 1}: tồn kho không được âm.";
+                if (variants.FindIndex(o => o.Material == v.Material && o.Color == v.Color) != i)
+                    return $"Biến thể {i + 1}: trùng chất liệu và màu với một biến thể phía trên.";
+            }
+            return null;
+        }
+
         [Authorize(Roles = "Admin,Nhân viên")]
         [HttpGet("all")]
         public async Task<IActionResult> GetAll()
@@ -489,7 +520,8 @@ KHÁCH ĐÃ MUA: {purchasedText}
             var product = await _context.Products
                 .Include(p => p.Variants)
                 .FirstOrDefaultAsync(p => p.Id == id);
-            if (product == null) return NotFound();
+            // Sản phẩm đang ẩn: chỉ Admin/Nhân viên xem được (trang sửa), khách vào bằng đường dẫn trực tiếp cũng không thấy.
+            if (product == null || (!product.IsActive && !IsStaff())) return NotFound();
             return Ok(product);
         }
 
@@ -503,6 +535,15 @@ KHÁCH ĐÃ MUA: {purchasedText}
         [HttpPost]
         public async Task<IActionResult> Create(Product product)
         {
+            product.Name = (product.Name ?? "").Trim();
+            var validationError = ValidateProduct(product);
+            if (validationError != null) return BadRequest(new { message = validationError });
+
+            // Chặn trùng tên (không phân biệt hoa thường), tính cả sản phẩm đang bị ẩn.
+            var lowerName = product.Name.ToLower();
+            if (await _context.Products.AnyAsync(p => p.Name.ToLower() == lowerName))
+                return BadRequest(new { message = "Sản phẩm này đã tồn tại. Nếu nó đang bị ẩn, hãy khôi phục thay vì tạo mới." });
+
             if (product.Variants.Count > 0)
             {
                 var totalVariantStock = product.Variants.Sum(v => v.Stock);
@@ -533,11 +574,20 @@ KHÁCH ĐÃ MUA: {purchasedText}
         {
             if (id != product.Id) return BadRequest();
 
+            product.Name = (product.Name ?? "").Trim();
+            var validationError = ValidateProduct(product);
+            if (validationError != null) return BadRequest(new { message = validationError });
+
             var detailError = ValidateDetailContent(product.DetailContent);
             if (detailError != null) return BadRequest(new { message = detailError });
 
             var existing = await _context.Products.FindAsync(id);
             if (existing == null) return NotFound();
+
+            // Chặn trùng tên với sản phẩm KHÁC (không phân biệt hoa thường, tính cả sản phẩm đang ẩn).
+            var lowerName = product.Name.ToLower();
+            if (await _context.Products.AnyAsync(p => p.Id != id && p.Name.ToLower() == lowerName))
+                return BadRequest(new { message = "Đã có sản phẩm khác trùng tên này." });
 
             if (product.Variants.Count > 0)
             {
@@ -562,19 +612,39 @@ KHÁCH ĐÃ MUA: {purchasedText}
             existing.Color = product.Color;
             existing.DetailContent = product.DetailContent;
 
-            var oldVariants = _context.ProductVariants.Where(v => v.ProductId == id);
-            _context.ProductVariants.RemoveRange(oldVariants);
+            // GIỮ NGUYÊN ID biến thể khi sửa sản phẩm. Trước đây xoá hết biến thể cũ rồi tạo lại nên mỗi lần sửa,
+            // mọi biến thể đổi ID mới — giỏ hàng, wishlist và đơn hàng đang giữ ID cũ bị "mồ côi".
+            // Cách ghép: ưu tiên theo Id gửi lên; không có Id (hoặc Id không thuộc sản phẩm này) thì ghép theo
+            // cặp Chất liệu + Màu (mỗi cặp là duy nhất trong 1 sản phẩm). Ghép được thì CẬP NHẬT tại chỗ, không
+            // ghép được thì THÊM MỚI; biến thể cũ không còn trong danh sách gửi lên mới bị XOÁ.
+            var unmatched = await _context.ProductVariants.Where(v => v.ProductId == id).ToListAsync();
             foreach (var v in product.Variants)
             {
-                _context.ProductVariants.Add(new ProductVariant
+                ProductVariant? target = null;
+                if (v.Id > 0) target = unmatched.FirstOrDefault(o => o.Id == v.Id);
+                target ??= unmatched.FirstOrDefault(o => o.Material == v.Material && o.Color == v.Color);
+
+                if (target != null)
                 {
-                    ProductId = id,
-                    Material = v.Material,
-                    Color = v.Color,
-                    Price = v.Price,
-                    Stock = v.Stock,
-                });
+                    unmatched.Remove(target);
+                    target.Material = v.Material;
+                    target.Color = v.Color;
+                    target.Price = v.Price;
+                    target.Stock = v.Stock;
+                }
+                else
+                {
+                    _context.ProductVariants.Add(new ProductVariant
+                    {
+                        ProductId = id,
+                        Material = v.Material,
+                        Color = v.Color,
+                        Price = v.Price,
+                        Stock = v.Stock,
+                    });
+                }
             }
+            _context.ProductVariants.RemoveRange(unmatched);
 
             await _context.SaveChangesAsync();
             return NoContent();

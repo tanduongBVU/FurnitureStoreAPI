@@ -76,14 +76,31 @@ namespace FurnitureStoreAPI.Controllers
         [HttpPost("register")]
         public async Task<IActionResult> Register(RegisterDto dto)
         {
-            if (await _context.Users.AnyAsync(u => u.Email == dto.Email))
+            // Kiểm tra dữ liệu ở Backend (giao diện cũng kiểm tra, nhưng gọi thẳng API thì không qua đó).
+            var name = (dto.Name ?? "").Trim();
+            var email = (dto.Email ?? "").Trim().ToLower();
+            var phone = (dto.Phone ?? "").Trim();
+            var address = (dto.Address ?? "").Trim();
+
+            if (name.Length == 0 || name.Length > 100)
+                return BadRequest(new { message = "Họ tên không được để trống và tối đa 100 ký tự." });
+            if (email.Length > 254 || !System.Text.RegularExpressions.Regex.IsMatch(email, @"^[^@\s]+@[^@\s]+\.[^@\s]+$"))
+                return BadRequest(new { message = "Email không hợp lệ." });
+            if (phone.Length > 0 && !System.Text.RegularExpressions.Regex.IsMatch(phone, @"^[0-9+\s\-]{9,15}$"))
+                return BadRequest(new { message = "Số điện thoại không hợp lệ." });
+            if (address.Length > 300)
+                return BadRequest(new { message = "Địa chỉ tối đa 300 ký tự." });
+            if (string.IsNullOrWhiteSpace(dto.Password) || dto.Password.Length < 6 || dto.Password.Length > 100)
+                return BadRequest(new { message = "Mật khẩu phải từ 6 đến 100 ký tự." });
+
+            if (await _context.Users.AnyAsync(u => u.Email.ToLower() == email))
                 return BadRequest(new { message = "Email đã được sử dụng!" });
             var user = new User
             {
-                Name = dto.Name,
-                Email = dto.Email,
-                Phone = dto.Phone,
-                Address = dto.Address,
+                Name = name,
+                Email = email,
+                Phone = phone,
+                Address = address,
                 PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password),
                 Role = "Khách hàng",
                 Status = "Hoạt động",
@@ -261,6 +278,12 @@ namespace FurnitureStoreAPI.Controllers
             else if (user.Status == "Bị khoá")
             {
                 return Unauthorized(new { message = "Tài khoản của bạn đã bị khoá!" });
+            }
+            else if (user.Role != "Khách hàng")
+            {
+                // Đăng nhập Google chỉ dành cho khách hàng. Admin/Nhân viên phải dùng email và mật khẩu,
+                // nếu không email Google trùng với tài khoản nội bộ sẽ vào thẳng quyền quản trị.
+                return StatusCode(403, new { message = "Tài khoản nội bộ không đăng nhập bằng Google. Vui lòng dùng email và mật khẩu." });
             }
 
             var token = _tokenService.CreateToken(user);

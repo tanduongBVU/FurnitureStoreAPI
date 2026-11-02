@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
+using System.Text.RegularExpressions;
 
 namespace FurnitureStoreAPI.Controllers
 {
@@ -83,6 +84,13 @@ namespace FurnitureStoreAPI.Controllers
             if (user.Role != "Admin" && user.Role != "Nhân viên")
                 return BadRequest(new { message = "Chỉ được tạo tài khoản Nhân viên hoặc Admin. Khách hàng tự đăng ký trên website!" });
 
+            if (string.IsNullOrWhiteSpace(user.Name) || user.Name.Trim().Length > 100)
+                return BadRequest(new { message = "Họ tên không được để trống và tối đa 100 ký tự!" });
+            try { _ = new System.Net.Mail.MailAddress((user.Email ?? "").Trim()); }
+            catch { return BadRequest(new { message = "Email không hợp lệ!" }); }
+            user.Name = user.Name.Trim();
+            user.Email = user.Email.Trim();
+
             if (await _context.Users.AnyAsync(u => u.Email == user.Email))
                 return BadRequest(new { message = "Email đã tồn tại!" });
 
@@ -115,8 +123,47 @@ namespace FurnitureStoreAPI.Controllers
                     message = "Admin không được sửa thông tin của khách hàng. Chỉ có thể xem, khoá/mở khoá hoặc đặt lại mật khẩu."
                 });
 
-            existing.Name = user.Name;
-            existing.Phone = user.Phone;
+            // ── Kiểm tra dữ liệu (không chỉ tin form phía giao diện) ──
+            var name = (user.Name ?? "").Trim();
+            if (name.Length == 0 || name.Length > 100)
+                return BadRequest(new { message = "Họ tên không được để trống và tối đa 100 ký tự!" });
+
+            var phone = (user.Phone ?? "").Trim();
+            if (phone.Length > 0 && !Regex.IsMatch(phone, @"^[0-9+\s\-]{9,15}$"))
+                return BadRequest(new { message = "Số điện thoại không hợp lệ!" });
+
+            if (user.Role != "Admin" && user.Role != "Nhân viên")
+                return BadRequest(new { message = "Vai trò chỉ có thể là Admin hoặc Nhân viên!" });
+            if (user.Status != "Hoạt động" && user.Status != "Bị khoá")
+                return BadRequest(new { message = "Trạng thái không hợp lệ!" });
+
+            // ── Chặn các thao tác tự phá hệ thống — giống ToggleStatus / Delete, vì Update cũng đổi được
+            // Role và Status nên không được để lọt qua đây ──
+            var currentUserId = GetCurrentUserId();
+            if (currentUserId == id)
+            {
+                if (user.Role != existing.Role)
+                    return BadRequest(new { message = "Không thể tự đổi vai trò của chính tài khoản đang đăng nhập!" });
+                if (user.Status == "Bị khoá")
+                    return BadRequest(new { message = "Không thể tự khoá chính tài khoản đang đăng nhập!" });
+            }
+
+            // Admin không bị khoá được (xem ToggleStatus) — Update cũng đổi được Status nên chặn ở đây luôn.
+            if (existing.Role == "Admin" && existing.Status != "Bị khoá" && user.Status == "Bị khoá")
+                return BadRequest(new { message = "Không thể khoá tài khoản Admin!" });
+
+            var losesAdmin = existing.Role == "Admin" && existing.Status == "Hoạt động"
+                             && (user.Role != "Admin" || user.Status == "Bị khoá");
+            if (losesAdmin)
+            {
+                var otherActiveAdmins = await _context.Users
+                    .CountAsync(u => u.Role == "Admin" && u.Status == "Hoạt động" && u.Id != id);
+                if (otherActiveAdmins == 0)
+                    return BadRequest(new { message = "Không thể hạ quyền hoặc khoá Admin đang hoạt động cuối cùng của hệ thống!" });
+            }
+
+            existing.Name = name;
+            existing.Phone = phone;
             existing.Role = user.Role;
             existing.Status = user.Status;
             await _context.SaveChangesAsync();
@@ -138,13 +185,9 @@ namespace FurnitureStoreAPI.Controllers
             var user = await _context.Users.FindAsync(id);
             if (user == null) return NotFound();
 
+            // Tài khoản Admin KHÔNG bị khoá được (kể cả bởi Admin khác). Chỉ khoá được Nhân viên và Khách hàng.
             if (status == "Bị khoá" && user.Role == "Admin")
-            {
-                var activeAdminCount = await _context.Users
-                    .CountAsync(u => u.Role == "Admin" && u.Status == "Hoạt động");
-                if (activeAdminCount <= 1)
-                    return BadRequest(new { message = "Không thể khoá Admin đang hoạt động cuối cùng của hệ thống!" });
-            }
+                return BadRequest(new { message = "Không thể khoá tài khoản Admin!" });
 
             user.Status = status;
             await _context.SaveChangesAsync();

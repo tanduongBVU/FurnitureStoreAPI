@@ -129,12 +129,33 @@ namespace FurnitureStoreAPI.Controllers
             return Ok(await AttachDetailsAsync(bundles));
         }
 
+        private bool IsStaff() => User.IsInRole("Admin") || User.IsInRole("Nhân viên");
+
+        // Kiểm tra dữ liệu combo ở Backend. Trả câu báo lỗi, hoặc null nếu hợp lệ. Gọi SAU khi đã Trim tên.
+        private async Task<string?> ValidateBundleAsync(BundleInputDto dto)
+        {
+            if (dto.Name.Length == 0 || dto.Name.Length > 200)
+                return "Tên combo không được để trống và tối đa 200 ký tự.";
+            if (dto.DiscountPercent < 0 || dto.DiscountPercent > 100)
+                return "Giảm giá của combo phải từ 0 đến 100%.";
+            if (dto.Items == null || dto.Items.Count < 2)
+                return "Combo cần ít nhất 2 sản phẩm.";
+
+            var ids = dto.Items.Select(i => i.ProductId).ToList();
+            if (ids.Distinct().Count() != ids.Count)
+                return "Mỗi sản phẩm chỉ được xuất hiện 1 lần trong combo (muốn nhiều cái thì tăng số lượng).";
+            if (await _context.Products.CountAsync(p => ids.Contains(p.Id)) != ids.Count)
+                return "Combo có sản phẩm không tồn tại.";
+            return null;
+        }
+
         // GET: api/bundles/5 — dùng chung Client (chi tiết) và Admin (trang sửa)
+        // Combo đang ẩn: chỉ Admin & Nhân viên xem được.
         [HttpGet("{id}")]
         public async Task<IActionResult> GetById(int id)
         {
             var bundle = await _context.Bundles.FindAsync(id);
-            if (bundle == null) return NotFound();
+            if (bundle == null || (!bundle.IsActive && !IsStaff())) return NotFound();
             var result = await AttachDetailsAsync(new List<Bundle> { bundle });
             return Ok(result[0]);
         }
@@ -144,8 +165,14 @@ namespace FurnitureStoreAPI.Controllers
         [HttpPost]
         public async Task<IActionResult> Create(BundleInputDto dto)
         {
-            if (dto.Items == null || dto.Items.Count < 2)
-                return BadRequest(new { message = "Combo cần ít nhất 2 sản phẩm." });
+            dto.Name = (dto.Name ?? "").Trim();
+            var error = await ValidateBundleAsync(dto);
+            if (error != null) return BadRequest(new { message = error });
+
+            // Chặn trùng tên (không phân biệt hoa thường), tính cả combo đang ẩn.
+            var lowerName = dto.Name.ToLower();
+            if (await _context.Bundles.AnyAsync(b => b.Name.ToLower() == lowerName))
+                return BadRequest(new { message = "Combo này đã tồn tại. Nếu nó đang bị ẩn, hãy khôi phục thay vì tạo mới." });
 
             var bundle = new Bundle
             {
@@ -184,8 +211,13 @@ namespace FurnitureStoreAPI.Controllers
             var bundle = await _context.Bundles.FindAsync(id);
             if (bundle == null) return NotFound();
 
-            if (dto.Items == null || dto.Items.Count < 2)
-                return BadRequest(new { message = "Combo cần ít nhất 2 sản phẩm." });
+            dto.Name = (dto.Name ?? "").Trim();
+            var error = await ValidateBundleAsync(dto);
+            if (error != null) return BadRequest(new { message = error });
+
+            var lowerName = dto.Name.ToLower();
+            if (await _context.Bundles.AnyAsync(b => b.Id != id && b.Name.ToLower() == lowerName))
+                return BadRequest(new { message = "Đã có combo khác trùng tên này." });
 
             bundle.Name = dto.Name;
             bundle.Description = dto.Description;

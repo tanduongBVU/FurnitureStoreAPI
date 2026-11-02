@@ -47,7 +47,25 @@ namespace FurnitureStoreAPI.Controllers
         {
             var post = await _context.BlogPosts.FindAsync(id);
             if (post == null) return NotFound();
+            // Bài nháp / đã ẩn: khách gọi thẳng đường dẫn cũng coi như không tồn tại.
+            // Admin/Nhân viên (có token) vẫn xem được để mở trang sửa.
+            if (!post.IsPublished && !(User.IsInRole("Admin") || User.IsInRole("Nhân viên"))) return NotFound();
             return Ok(post);
+        }
+
+        // Kiểm tra tiêu đề; trùng với bài khác (kể cả nháp/đã ẩn) thì báo lỗi.
+        private async Task<string?> ValidateTitleAsync(string title, int? excludeId)
+        {
+            if (title.Length == 0) return "Tiêu đề bài viết không được để trống.";
+            if (title.Length > 300) return "Tiêu đề bài viết tối đa 300 ký tự.";
+
+            var lower = title.ToLower();
+            var dup = await _context.BlogPosts
+                .FirstOrDefaultAsync(p => p.Title.ToLower() == lower && (excludeId == null || p.Id != excludeId));
+            if (dup == null) return null;
+            return dup.IsPublished
+                ? $"Bài viết “{dup.Title}” đã tồn tại."
+                : $"Bài viết “{dup.Title}” đã tồn tại nhưng đang ở trạng thái nháp / ẩn. Hãy sửa bài đó thay vì tạo mới.";
         }
 
         // POST: api/blogposts — Admin & Nhân viên đều được viết bài
@@ -55,6 +73,10 @@ namespace FurnitureStoreAPI.Controllers
         [HttpPost]
         public async Task<IActionResult> Create(BlogPost post)
         {
+            post.Title = (post.Title ?? "").Trim();
+            var titleError = await ValidateTitleAsync(post.Title, null);
+            if (titleError != null) return BadRequest(new { message = titleError });
+
             post.CreatedAt = DateTime.Now;
             _context.BlogPosts.Add(post);
             await _context.SaveChangesAsync();
@@ -71,7 +93,11 @@ namespace FurnitureStoreAPI.Controllers
             var existing = await _context.BlogPosts.FindAsync(id);
             if (existing == null) return NotFound();
 
-            existing.Title = post.Title;
+            var title = (post.Title ?? "").Trim();
+            var titleError = await ValidateTitleAsync(title, id);
+            if (titleError != null) return BadRequest(new { message = titleError });
+
+            existing.Title = title;
             existing.Category = post.Category;
             existing.Thumbnail = post.Thumbnail;
             existing.Excerpt = post.Excerpt;

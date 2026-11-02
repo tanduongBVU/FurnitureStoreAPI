@@ -46,12 +46,19 @@ namespace FurnitureStoreAPI.Controllers
             return Ok(services);
         }
 
+        private bool IsStaff() => User.IsInRole("Admin") || User.IsInRole("Nhân viên");
+
+        // Kiểm tra tiêu đề (đã Trim): bắt buộc, tối đa 200 ký tự.
+        private static string? ValidateTitle(string title) =>
+            title.Length == 0 || title.Length > 200 ? "Tên dịch vụ không được để trống và tối đa 200 ký tự." : null;
+
         // GET: api/services/5 — dùng chung cho Client (trang chi tiết) và Admin (trang sửa)
+        // Dịch vụ đang ẩn: chỉ Admin & Nhân viên xem được.
         [HttpGet("{id}")]
         public async Task<IActionResult> GetById(int id)
         {
             var service = await _context.Services.FindAsync(id);
-            if (service == null) return NotFound();
+            if (service == null || (!service.IsActive && !IsStaff())) return NotFound();
             return Ok(service);
         }
 
@@ -60,6 +67,15 @@ namespace FurnitureStoreAPI.Controllers
         [HttpPost]
         public async Task<IActionResult> Create(Service service)
         {
+            service.Title = (service.Title ?? "").Trim();
+            var titleError = ValidateTitle(service.Title);
+            if (titleError != null) return BadRequest(new { message = titleError });
+
+            // Chặn trùng tên trong CÙNG loại dịch vụ (không phân biệt hoa thường), tính cả dịch vụ đang ẩn.
+            var lowerTitle = service.Title.ToLower();
+            if (await _context.Services.AnyAsync(s => s.Type == service.Type && s.Title.ToLower() == lowerTitle))
+                return BadRequest(new { message = "Dịch vụ này đã tồn tại. Nếu nó đang bị ẩn, hãy khôi phục thay vì tạo mới." });
+
             service.CreatedAt = DateTime.Now;
             service.IsActive = true;
             _context.Services.Add(service);
@@ -76,6 +92,14 @@ namespace FurnitureStoreAPI.Controllers
 
             var existing = await _context.Services.FindAsync(id);
             if (existing == null) return NotFound();
+
+            service.Title = (service.Title ?? "").Trim();
+            var titleError = ValidateTitle(service.Title);
+            if (titleError != null) return BadRequest(new { message = titleError });
+
+            var lowerTitle = service.Title.ToLower();
+            if (await _context.Services.AnyAsync(s => s.Id != id && s.Type == service.Type && s.Title.ToLower() == lowerTitle))
+                return BadRequest(new { message = "Đã có dịch vụ khác trùng tên này trong cùng loại." });
 
             existing.Type = service.Type;
             existing.Title = service.Title;

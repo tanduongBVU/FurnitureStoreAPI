@@ -325,20 +325,91 @@ namespace FurnitureStoreAPI.Controllers
             return CreatedAtAction(nameof(GetById), new { id = order.Id }, new { order, couponNote, confirmCode });
         }
 
+        private static readonly string[] OrderStatuses =
+            { "Chờ xác nhận", "Đang xử lý", "Đang giao", "Hoàn thành", "Huỷ" };
+
+        // Mở lại đơn ĐÃ HUỶ (huỷ → trạng thái khác): đơn lại giữ hàng nên phải TRỪ KHO LẠI, ngược với lúc huỷ.
+        // Kiểm tra đủ hàng cho TẤT CẢ dòng trước, rồi mới trừ — thiếu hàng ở dòng nào thì không trừ dòng nào
+        // và trả thông báo lỗi (null = đã giữ hàng thành công). Cộng dồn theo sản phẩm / biến thể phòng khi
+        // 1 sản phẩm xuất hiện ở nhiều dòng (VD: vừa mua lẻ vừa nằm trong combo).
+        private async Task<string?> ReserveStockForReopenAsync(Order order)
+        {
+            var needByProduct = order.OrderItems
+                .GroupBy(i => i.ProductId)
+                .ToDictionary(g => g.Key, g => g.Sum(i => i.Quantity));
+            var needByVariant = order.OrderItems
+                .Where(i => i.VariantId.HasValue)
+                .GroupBy(i => i.VariantId!.Value)
+                .ToDictionary(g => g.Key, g => g.Sum(i => i.Quantity));
+
+            var products = new Dictionary<int, Product>();
+            foreach (var (productId, need) in needByProduct)
+            {
+                var product = await _context.Products.FindAsync(productId);
+                if (product == null)
+                    return "Đơn có sản phẩm đã bị xoá khỏi hệ thống nên không thể mở lại.";
+                if (product.Stock < need)
+                    return $"'{product.Name}' không đủ hàng để mở lại đơn (còn {product.Stock}, cần {need}).";
+                products[productId] = product;
+            }
+
+            // Biến thể không còn tồn tại (đơn cũ tạo trước khi sửa sản phẩm giữ nguyên ID biến thể) thì BỎ QUA
+            // biến thể đó, chỉ trừ kho tổng của sản phẩm — giống cách lúc huỷ đơn vẫn hoàn kho sản phẩm khi
+            // không tìm thấy biến thể. Nhờ vậy đơn cũ vẫn mở lại được.
+            var variants = new Dictionary<int, ProductVariant>();
+            foreach (var (variantId, need) in needByVariant)
+            {
+                var variant = await _context.ProductVariants.FindAsync(variantId);
+                if (variant == null) continue;
+                if (variant.Stock < need)
+                    return $"Biến thể '{variant.Name}' không đủ hàng để mở lại đơn (còn {variant.Stock}, cần {need}).";
+                variants[variantId] = variant;
+            }
+
+            foreach (var (productId, need) in needByProduct) products[productId].Stock -= need;
+            foreach (var (variantId, need) in needByVariant)
+                if (variants.TryGetValue(variantId, out var v)) v.Stock -= need;
+            return null;
+        }
+
         [Authorize(Roles = "Admin,Nhân viên")]
         [HttpPatch("{id}/status")]
         public async Task<IActionResult> UpdateStatus(int id, [FromBody] string status)
         {
+            if (!OrderStatuses.Contains(status))
+                return BadRequest(new { message = "Trạng thái đơn hàng không hợp lệ." });
+
             var order = await _context.Orders
                 .Include(o => o.OrderItems)
                 .FirstOrDefaultAsync(o => o.Id == id);
             if (order == null) return NotFound();
+
+            if (order.Status == "Huỷ" && status != "Huỷ")
+            {
+                var reopenError = await ReserveStockForReopenAsync(order);
+                if (reopenError != null)
+                    return BadRequest(new { message = reopenError });
+
+                // Mở lại đơn thì tính lại 1 lượt dùng mã giảm giá (đã được trả lại lúc huỷ).
+                if (!string.IsNullOrEmpty(order.CouponCode))
+                {
+                    var coupon = await _context.Coupons.FirstOrDefaultAsync(c => c.Code == order.CouponCode);
+                    if (coupon != null) coupon.UsedCount += 1;
+                }
+            }
 
             // Nếu đơn bị chuyển sang "Huỷ", HOÀN LẠI tồn kho đã trừ lúc tạo đơn — tránh
             // tồn kho bị "mất" oan khi khách/Admin huỷ đơn. Chỉ hoàn 1 lần — nếu đơn ĐÃ
             // huỷ từ trước rồi lại bấm huỷ lần nữa thì không hoàn thêm lần 2.
             if (status == "Huỷ" && order.Status != "Huỷ")
             {
+                // Trả lại 1 lượt dùng mã giảm giá để mã giới hạn lượt không bị "mất" oan vì đơn đã huỷ.
+                if (!string.IsNullOrEmpty(order.CouponCode))
+                {
+                    var coupon = await _context.Coupons.FirstOrDefaultAsync(c => c.Code == order.CouponCode);
+                    if (coupon != null && coupon.UsedCount > 0) coupon.UsedCount -= 1;
+                }
+
                 foreach (var item in order.OrderItems)
                 {
                     var product = await _context.Products.FindAsync(item.ProductId);
