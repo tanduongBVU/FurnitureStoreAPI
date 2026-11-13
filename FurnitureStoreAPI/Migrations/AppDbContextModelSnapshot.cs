@@ -114,6 +114,9 @@ namespace FurnitureStoreAPI.Migrations
                     b.Property<int>("Quantity")
                         .HasColumnType("int");
 
+                    b.Property<int?>("VariantId")
+                        .HasColumnType("int");
+
                     b.HasKey("Id");
 
                     b.HasIndex("BundleId");
@@ -215,12 +218,14 @@ namespace FurnitureStoreAPI.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<decimal>("BundleDiscount")
+                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<string>("CouponCode")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<decimal>("CouponDiscount")
+                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<DateTime>("CreatedAt")
@@ -277,6 +282,9 @@ namespace FurnitureStoreAPI.Migrations
 
                     b.Property<int>("ProductId")
                         .HasColumnType("int");
+
+                    b.Property<string>("ProductImage")
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("ProductName")
                         .IsRequired()

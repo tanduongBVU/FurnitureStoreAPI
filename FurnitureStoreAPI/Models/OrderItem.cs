@@ -6,6 +6,10 @@
         public int OrderId { get; set; }
         public int ProductId { get; set; }
         public string ProductName { get; set; } = string.Empty;
+        // Ảnh sản phẩm TẠI THỜI ĐIỂM ĐẶT HÀNG — lưu nguyên văn giống ProductName, để Admin sửa/đổi ảnh sản phẩm
+        // sau này không làm lịch sử đơn hàng đổi theo. null = đơn cũ tạo trước khi có cột này
+        // (Client sẽ tạm dùng ảnh hiện tại của sản phẩm).
+        public string? ProductImage { get; set; }
         public int Quantity { get; set; }
         public decimal Price { get; set; }
 

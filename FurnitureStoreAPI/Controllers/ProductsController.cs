@@ -89,6 +89,8 @@ namespace FurnitureStoreAPI.Controllers
                     Variants = pVariants,
                     HasVariants = pVariants.Count > 0,
                     DisplayPrice = pVariants.Count > 0 ? pVariants.Min(v => v.Price) : p.Price,
+                    // Giá lớn nhất trong các biến thể — Client hiện khoảng "giá nhỏ nhất – giá lớn nhất".
+                    DisplayPriceMax = pVariants.Count > 0 ? pVariants.Max(v => v.Price) : p.Price,
                     Reason = reason,
                 };
             }).ToList();
@@ -510,7 +512,8 @@ KHÁCH ĐÃ MUA: {purchasedText}
         [HttpGet("all")]
         public async Task<IActionResult> GetAll()
         {
-            var products = await _context.Products.ToListAsync();
+            // Kèm biến thể để trang quản lý hiện được khoảng giá "nhỏ nhất – lớn nhất" của từng sản phẩm.
+            var products = await _context.Products.Include(p => p.Variants).ToListAsync();
             return Ok(products);
         }
 

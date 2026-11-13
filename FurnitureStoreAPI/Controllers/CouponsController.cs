@@ -32,6 +32,35 @@ namespace FurnitureStoreAPI.Controllers
             return (true, "", coupon);
         }
 
+        // Mỗi khách chỉ được dùng 1 mã đúng 1 lần. Đơn đã Huỷ không tính (huỷ thì được dùng lại).
+        //  - Khách ĐÃ ĐĂNG NHẬP: nhận diện theo TÀI KHOẢN (UserId). Nhiều tài khoản dùng chung 1 số điện thoại
+        //    vẫn độc lập với nhau, không chặn nhầm nhau.
+        //  - Khách KHÔNG đăng nhập: nhận diện theo SỐ ĐIỆN THOẠI (so với mọi đơn đã dùng mã).
+        // Không cần cột/migration mới: tra thẳng từ Orders.CouponCode.
+        public static async Task<bool> HasCustomerUsedAsync(AppDbContext ctx, string code, int? userId, string? phone)
+        {
+            var q = ctx.Orders.Where(o => o.CouponCode == code && o.Status != "Huỷ");
+
+            if (userId.HasValue)
+                return await q.AnyAsync(o => o.UserId == userId.Value);
+
+            var digits = NormalizePhone(phone);
+            if (digits.Length == 0) return false;
+
+            var phones = await q.Select(o => o.Phone).ToListAsync();
+            return phones.Any(p => NormalizePhone(p) == digits);
+        }
+
+        public const string AlreadyUsedMessage = "Bạn đã sử dụng mã giảm giá này rồi. Mỗi khách chỉ được dùng 1 lần.";
+
+        // Chuẩn hoá SĐT để "0912 345 678", "0912.345.678", "+84912345678", "84912345678" đều coi là cùng 1 số.
+        private static string NormalizePhone(string? phone)
+        {
+            var d = new string((phone ?? "").Where(char.IsDigit).ToArray());
+            if (d.StartsWith("84") && d.Length >= 11) d = "0" + d.Substring(2);
+            return d;
+        }
+
         // GET: api/coupons — Admin & Nhân viên xem danh sách quản lý mã giảm giá.
         [Authorize(Roles = "Admin,Nhân viên")]
         [HttpGet]
@@ -54,6 +83,9 @@ namespace FurnitureStoreAPI.Controllers
             var (valid, reason, coupon) = CheckCoupon(matching, dto.OrderValue);
 
             if (!valid) return BadRequest(new { message = reason });
+
+            if (await HasCustomerUsedAsync(_context, coupon!.Code, dto.UserId, dto.Phone))
+                return BadRequest(new { message = AlreadyUsedMessage });
 
             return Ok(new
             {
@@ -126,5 +158,7 @@ namespace FurnitureStoreAPI.Controllers
     {
         public string Code { get; set; } = string.Empty;
         public decimal OrderValue { get; set; }
+        public int? UserId { get; set; }
+        public string? Phone { get; set; }
     }
 }

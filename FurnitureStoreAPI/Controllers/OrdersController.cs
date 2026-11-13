@@ -105,19 +105,6 @@ namespace FurnitureStoreAPI.Controllers
             return Ok(order);
         }
 
-        // Giá của 1 dòng CÓ BIẾN THỂ. Giá biến thể nằm ở ProductVariant.Price (database), nhưng
-        // chưa rõ giảm giá của sản phẩm (Product.DiscountPercent) có áp lên biến thể hay không
-        // (do giao diện trang chi tiết quyết định). Nên server chấp nhận giá Client gửi nếu nó
-        // NẰM TRONG khoảng hợp lệ [giá biến thể sau giảm, giá biến thể gốc]; nằm ngoài khoảng
-        // (sửa giá, giỏ hàng cũ lệch giá) thì tính theo giá gốc trong database.
-        private static decimal ResolveVariantPrice(Product product, ProductVariant variant, decimal clientPrice)
-        {
-            var full = variant.Price;
-            var discounted = Math.Round(full * (1 - product.DiscountPercent / 100m), 0, MidpointRounding.AwayFromZero);
-            var offered = Math.Round(clientPrice, 0, MidpointRounding.AwayFromZero);
-            return offered >= discounted - 1 && offered <= full + 1 ? offered : full;
-        }
-
         // POST: api/orders  — công khai, khách hàng đặt hàng từ FE Client không cần đăng nhập.
         //
         // GIÁ DO SERVER TÍNH: Client chỉ gửi mã sản phẩm / mã combo + số lượng. Giá lấy từ
@@ -192,8 +179,10 @@ namespace FurnitureStoreAPI.Controllers
                     {
                         ProductId = product.Id,
                         ProductName = $"{product.Name} - {variant.Name}",
+                        ProductImage = product.Image,
                         Quantity = line.Quantity,
-                        Price = ResolveVariantPrice(product, variant, line.Price),
+                        // Giá do SERVER tự tính: giá biến thể trong database trừ giảm giá của sản phẩm (giá Client gửi lên bị bỏ qua).
+                        Price = PricingHelper.VariantSaleUnitPrice(product, variant),
                         VariantId = variant.Id,
                         VariantName = variant.Name,
                     });
@@ -212,6 +201,7 @@ namespace FurnitureStoreAPI.Controllers
                     {
                         ProductId = product.Id,
                         ProductName = product.Name,
+                        ProductImage = product.Image,
                         Quantity = line.Quantity,
                         Price = PricingHelper.SaleUnitPrice(product),
                     });
@@ -252,6 +242,24 @@ namespace FurnitureStoreAPI.Controllers
                         return BadRequest(new { message = $"Combo '{bundle.Name}' có sản phẩm đã ngừng bán, tạm thời không đặt được." });
 
                     var need = bi.Quantity * bl.Quantity;
+
+                    // Sản phẩm CÓ biến thể thì combo phải trỏ tới 1 biến thể cụ thể: tính giá, trừ kho và ghi đơn theo biến thể đó.
+                    ProductVariant? variant = null;
+                    var productHasVariants = await _context.ProductVariants.AnyAsync(v => v.ProductId == product.Id);
+                    if (productHasVariants)
+                    {
+                        if (!bi.VariantId.HasValue)
+                            return BadRequest(new { message = $"Combo '{bundle.Name}': '{product.Name}' chưa được chọn biến thể, tạm thời không đặt được. Vui lòng liên hệ cửa hàng." });
+                        variant = await _context.ProductVariants.FindAsync(bi.VariantId.Value);
+                        if (variant == null || variant.ProductId != product.Id)
+                            return BadRequest(new { message = $"Combo '{bundle.Name}': biến thể của '{product.Name}' không còn tồn tại, tạm thời không đặt được." });
+                        if (variant.Stock < need)
+                            return BadRequest(new
+                            {
+                                message = $"Combo '{bundle.Name}': '{product.Name} - {variant.Name}' không đủ hàng (còn {variant.Stock}, cần {need})."
+                            });
+                    }
+
                     if (product.Stock < need)
                         return BadRequest(new
                         {
@@ -259,16 +267,27 @@ namespace FurnitureStoreAPI.Controllers
                         });
 
                     product.Stock -= need;
+                    if (variant != null) variant.Stock -= need;
 
-                    var comboUnit = PricingHelper.ComboUnitPrice(product, bundle.DiscountPercent);
-                    bundleDiscount += (PricingHelper.SaleUnitPrice(product) - comboUnit) * need;
+                    var comboUnit = variant != null
+                        ? PricingHelper.ComboUnitPrice(product, variant, bundle.DiscountPercent)
+                        : PricingHelper.ComboUnitPrice(product, bundle.DiscountPercent);
+                    var saleUnit = variant != null
+                        ? PricingHelper.VariantSaleUnitPrice(product, variant)
+                        : PricingHelper.SaleUnitPrice(product);
+                    bundleDiscount += (saleUnit - comboUnit) * need;
 
                     order.OrderItems.Add(new OrderItem
                     {
                         ProductId = product.Id,
-                        ProductName = $"[{bundleLabel}] {product.Name}",
+                        ProductName = variant != null
+                            ? $"[{bundleLabel}] {product.Name} - {variant.Name}"
+                            : $"[{bundleLabel}] {product.Name}",
+                        ProductImage = product.Image,
                         Quantity = need,
                         Price = comboUnit,
+                        VariantId = variant?.Id,
+                        VariantName = variant?.Name,
                     });
                 }
             }
@@ -276,6 +295,11 @@ namespace FurnitureStoreAPI.Controllers
             var subtotal = order.OrderItems.Sum(i => i.Price * i.Quantity);
             decimal total = subtotal;
             string? couponNote = null;
+
+            // Transaction bao từ lúc giành lượt mã giảm giá đến lúc lưu đơn: dòng Coupon bị khoá cho tới khi
+            // Commit, nên 2 đơn đặt cùng lúc với cùng 1 mã sẽ phải xếp hàng, không thể cùng lọt qua.
+            // Rời hàm bằng lỗi/exception thì transaction tự Rollback (không mất lượt mã oan).
+            await using var tx = await _context.Database.BeginTransactionAsync();
 
             if (!string.IsNullOrWhiteSpace(dto.CouponCode))
             {
@@ -285,12 +309,36 @@ namespace FurnitureStoreAPI.Controllers
 
                 if (valid && coupon != null)
                 {
+                    // GIÀNH 1 LƯỢT bằng 1 câu UPDATE nguyên tử: chỉ tăng UsedCount nếu còn lượt (ngay trong
+                    // database, không đọc-rồi-ghi). Trả về 0 dòng = vừa có người khác lấy hết lượt cuối.
+                    var claimed = await _context.Coupons
+                        .Where(c => c.Id == coupon.Id && (c.MaxUsage == null || c.UsedCount < c.MaxUsage))
+                        .ExecuteUpdateAsync(s => s.SetProperty(c => c.UsedCount, c => c.UsedCount + 1));
+
+                    if (claimed == 0)
+                    {
+                        valid = false;
+                        reason = "Mã giảm giá đã hết lượt sử dụng.";
+                    }
+                    // Kiểm tra "mỗi khách 1 lần" SAU khi đã giữ khoá dòng mã: đơn của chính khách này gửi
+                    // song song (bấm đúp, 2 tab) đã Commit xong nên chắc chắn được nhìn thấy ở đây.
+                    else if (await CouponsController.HasCustomerUsedAsync(_context, coupon.Code, order.UserId, order.Phone))
+                    {
+                        await _context.Coupons
+                            .Where(c => c.Id == coupon.Id && c.UsedCount > 0)
+                            .ExecuteUpdateAsync(s => s.SetProperty(c => c.UsedCount, c => c.UsedCount - 1));
+                        valid = false;
+                        reason = CouponsController.AlreadyUsedMessage;
+                    }
+                }
+
+                if (valid && coupon != null)
+                {
                     var discount = Math.Round(subtotal * coupon.DiscountPercent / 100, 0);
                     total = subtotal - discount;
                     order.CouponCode = coupon.Code;
                     order.CouponDiscount = discount;
-
-                    coupon.UsedCount += 1;
+                    // UsedCount đã được tăng ở câu UPDATE nguyên tử phía trên — KHÔNG tăng lần nữa ở đây.
                 }
                 else
                 {
@@ -303,6 +351,7 @@ namespace FurnitureStoreAPI.Controllers
             order.Total = total;
             _context.Orders.Add(order);
             await _context.SaveChangesAsync();
+            await tx.CommitAsync();
 
             try
             {

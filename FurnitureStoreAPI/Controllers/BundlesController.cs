@@ -10,6 +10,8 @@ namespace FurnitureStoreAPI.Controllers
     public class BundleItemInputDto
     {
         public int ProductId { get; set; }
+        // Biến thể được chọn — bắt buộc nếu sản phẩm có biến thể, bỏ trống (null) nếu không có.
+        public int? VariantId { get; set; }
         public int Quantity { get; set; } = 1;
     }
 
@@ -53,6 +55,12 @@ namespace FurnitureStoreAPI.Controllers
                 .Include(bi => bi.Product)
                 .ToListAsync();
 
+            // Biến thể của mọi sản phẩm xuất hiện trong các combo (để biết sản phẩm nào có biến thể và lấy giá/tồn kho đúng biến thể)
+            var productIds = items.Select(i => i.ProductId).Distinct().ToList();
+            var allVariants = await _context.ProductVariants
+                .Where(v => productIds.Contains(v.ProductId))
+                .ToListAsync();
+
             return bundles.Select(b =>
             {
                 var bundleItems = items.Where(i => i.BundleId == b.Id).ToList();
@@ -60,14 +68,35 @@ namespace FurnitureStoreAPI.Controllers
                 var itemDtos = bundleItems.Select(i =>
                 {
                     var p = i.Product;
-                    var unitPrice = p != null ? PricingHelper.SaleUnitPrice(p) : 0m;
-                    var comboUnitPrice = p != null ? PricingHelper.ComboUnitPrice(p, b.DiscountPercent) : 0m;
-                    var stock = p?.Stock ?? 0;
-                    var inStock = p != null && p.IsActive && stock >= i.Quantity;
+                    var productVariants = allVariants.Where(v => v.ProductId == i.ProductId).ToList();
+                    var hasVariants = productVariants.Count > 0;
+                    var variant = i.VariantId.HasValue ? productVariants.FirstOrDefault(v => v.Id == i.VariantId.Value) : null;
+
+                    // Combo cũ (tạo trước khi có chọn biến thể) hoặc biến thể đã bị xoá: không bán được cho tới khi Admin chọn lại
+                    var variantProblem = p != null && hasVariants && variant == null;
+
+                    string name;
+                    if (p == null) name = "(Sản phẩm đã bị xoá)";
+                    else if (variant != null) name = $"{p.Name} - {variant.Name}";
+                    else if (variantProblem) name = $"{p.Name} (chưa chọn biến thể)";
+                    else name = p.Name;
+
+                    var unitPrice = p == null ? 0m
+                        : variant != null ? PricingHelper.VariantSaleUnitPrice(p, variant)
+                        : PricingHelper.SaleUnitPrice(p);
+                    var comboUnitPrice = p == null ? 0m
+                        : variant != null ? PricingHelper.ComboUnitPrice(p, variant, b.DiscountPercent)
+                        : PricingHelper.ComboUnitPrice(p, b.DiscountPercent);
+
+                    // Tồn kho: theo biến thể nếu có (và không vượt kho tổng của sản phẩm)
+                    var stock = p == null ? 0 : variant != null ? Math.Min(variant.Stock, p.Stock) : p.Stock;
+                    var inStock = p != null && p.IsActive && !variantProblem && stock >= i.Quantity;
                     return new
                     {
                         i.ProductId,
-                        ProductName = p?.Name ?? "(Sản phẩm đã bị xoá)",
+                        VariantId = variant?.Id,
+                        VariantName = variant?.Name,
+                        ProductName = name,
                         ProductImage = p?.Image,
                         ProductPrice = unitPrice,
                         ComboUnitPrice = comboUnitPrice,
@@ -141,11 +170,34 @@ namespace FurnitureStoreAPI.Controllers
             if (dto.Items == null || dto.Items.Count < 2)
                 return "Combo cần ít nhất 2 sản phẩm.";
 
-            var ids = dto.Items.Select(i => i.ProductId).ToList();
-            if (ids.Distinct().Count() != ids.Count)
-                return "Mỗi sản phẩm chỉ được xuất hiện 1 lần trong combo (muốn nhiều cái thì tăng số lượng).";
-            if (await _context.Products.CountAsync(p => ids.Contains(p.Id)) != ids.Count)
+            // Mỗi dòng là 1 cặp (sản phẩm, biến thể) duy nhất — cùng sản phẩm được xuất hiện nhiều lần nếu khác biến thể.
+            var pairs = dto.Items.Select(i => (i.ProductId, i.VariantId)).ToList();
+            if (pairs.Distinct().Count() != pairs.Count)
+                return "Mỗi sản phẩm (cùng biến thể) chỉ được xuất hiện 1 lần trong combo (muốn nhiều cái thì tăng số lượng).";
+
+            var ids = dto.Items.Select(i => i.ProductId).Distinct().ToList();
+            var products = await _context.Products.Where(p => ids.Contains(p.Id)).ToListAsync();
+            if (products.Count != ids.Count)
                 return "Combo có sản phẩm không tồn tại.";
+
+            var variants = await _context.ProductVariants.Where(v => ids.Contains(v.ProductId)).ToListAsync();
+            foreach (var item in dto.Items)
+            {
+                var product = products.First(p => p.Id == item.ProductId);
+                var pv = variants.Where(v => v.ProductId == item.ProductId).ToList();
+                if (pv.Count > 0)
+                {
+                    // Sản phẩm CÓ biến thể → bắt buộc chọn rõ 1 biến thể của chính sản phẩm đó
+                    if (!item.VariantId.HasValue)
+                        return $"Sản phẩm '{product.Name}' có biến thể — vui lòng chọn rõ biến thể cho combo.";
+                    if (!pv.Any(v => v.Id == item.VariantId.Value))
+                        return $"Biến thể đã chọn không thuộc sản phẩm '{product.Name}'.";
+                }
+                else if (item.VariantId.HasValue)
+                {
+                    return $"Sản phẩm '{product.Name}' không có biến thể.";
+                }
+            }
             return null;
         }
 
@@ -192,6 +244,7 @@ namespace FurnitureStoreAPI.Controllers
                 {
                     BundleId = bundle.Id,
                     ProductId = item.ProductId,
+                    VariantId = item.VariantId,
                     Quantity = item.Quantity < 1 ? 1 : item.Quantity,
                 });
             }
@@ -233,6 +286,7 @@ namespace FurnitureStoreAPI.Controllers
                 {
                     BundleId = id,
                     ProductId = item.ProductId,
+                    VariantId = item.VariantId,
                     Quantity = item.Quantity < 1 ? 1 : item.Quantity,
                 });
             }
