@@ -526,6 +526,43 @@ namespace FurnitureStoreAPI.Controllers
             return Ok(new { message = "Đã huỷ đơn hàng.", status = "Huỷ" });
         }
 
+        // POST: api/orders/5/cancel-payment — khách HUỶ THANH TOÁN ngay ở màn hình QR (đơn QR vừa tạo, chưa trả tiền).
+        // Công khai nhưng PHẢI kèm mã xác nhận của đơn (giống confirm-transfer / payment-status) nên khách vãng lai
+        // (không đăng nhập) cũng huỷ được, còn người khác không huỷ được đơn của mình.
+        // Chỉ huỷ khi: đơn QR, còn "Chờ xác nhận" và CHƯA ghi nhận thanh toán. Không gửi email (khách chưa nhận email xác nhận).
+        [HttpPost("{id}/cancel-payment")]
+        public async Task<IActionResult> CancelPayment(int id, ConfirmTransferDto dto)
+        {
+            if (!_tokenService.VerifyOrderConfirmCode(id, dto.Code ?? ""))
+                return BadRequest(new { message = "Mã xác nhận không hợp lệ." });
+
+            var order = await _context.Orders.Include(o => o.OrderItems).FirstOrDefaultAsync(o => o.Id == id);
+            if (order == null) return NotFound(new { message = "Không tìm thấy đơn hàng." });
+
+            if (order.PaymentMethod != "QR")
+                return BadRequest(new { message = "Đơn hàng này không thanh toán bằng chuyển khoản QR." });
+            if (order.PaymentStatus == "Đã thanh toán")
+                return BadRequest(new { message = "Hệ thống đã nhận được tiền của đơn này nên không thể huỷ thanh toán. Vui lòng liên hệ cửa hàng nếu cần hỗ trợ." });
+            if (order.Status != "Chờ xác nhận")
+                return BadRequest(new { message = "Đơn hàng không còn ở trạng thái có thể huỷ." });
+
+            await using var tx = await _context.Database.BeginTransactionAsync();
+
+            // Cập nhật có điều kiện: nếu đúng lúc này tiền vừa về (webhook / hỏi SePay ghi "Đã thanh toán") thì
+            // 0 dòng bị ảnh hưởng → không huỷ, không hoàn kho nhầm.
+            var claimed = await _context.Orders
+                .Where(o => o.Id == id && o.Status == "Chờ xác nhận" && o.PaymentStatus != "Đã thanh toán")
+                .ExecuteUpdateAsync(s => s.SetProperty(o => o.Status, "Huỷ"));
+            if (claimed == 0)
+                return Conflict(new { message = "Đơn hàng vừa được cập nhật (có thể đã nhận được tiền), vui lòng đợi trong giây lát." });
+
+            await RestoreStockAndCouponAsync(order);
+            await _context.SaveChangesAsync();
+            await tx.CommitAsync();
+
+            return Ok(new { message = "Đã huỷ thanh toán và đơn hàng.", status = "Huỷ" });
+        }
+
         [Authorize(Roles = "Admin,Nhân viên")]
         [HttpPatch("{id}/status")]
         public async Task<IActionResult> UpdateStatus(int id, [FromBody] string status)
