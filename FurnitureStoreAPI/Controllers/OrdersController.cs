@@ -53,18 +53,46 @@ namespace FurnitureStoreAPI.Controllers
         private readonly AppDbContext _context;
         private readonly IEmailService _emailService;
         private readonly TokenService _tokenService;
-        public OrdersController(AppDbContext context, IEmailService emailService, TokenService tokenService)
+        private readonly IConfiguration _config;
+        private readonly ILogger<OrdersController> _logger;
+        public OrdersController(AppDbContext context, IEmailService emailService, TokenService tokenService, IConfiguration config, ILogger<OrdersController> logger)
         {
+            _logger = logger;
             _context = context;
             _emailService = emailService;
             _tokenService = tokenService;
+            _config = config;
         }
+
+        // Tự động xác nhận thanh toán QR (webhook SePay) đã được cấu hình hay chưa — xem PaymentsController.
+        // Bật tự động xác nhận khi có ApiKey (SePay gọi webhook vào) HOẶC ApiToken (Backend chủ động hỏi SePay — chạy được trên localhost).
+        private bool IsAutoConfirmEnabled() =>
+            !string.IsNullOrWhiteSpace(_config["SePay:ApiKey"]) || SePayPoller.IsConfigured(_config);
 
         private async Task<string?> GetUserEmailAsync(int? userId)
         {
             if (!userId.HasValue) return null;
             var user = await _context.Users.FindAsync(userId.Value);
             return user?.Email;
+        }
+
+        // Gửi email xác nhận đơn hàng (lỗi gửi mail không làm hỏng luồng đặt hàng/thanh toán).
+        private async Task SendOrderConfirmationAsync(Order order)
+        {
+            try
+            {
+                var email = await GetUserEmailAsync(order.UserId);
+                if (email != null)
+                {
+                    await _emailService.SendAsync(
+                        email,
+                        $"Xác nhận đơn hàng #{order.Id} — LuxWood",
+                        EmailTemplates.OrderConfirmation(order));
+                }
+            }
+            catch
+            {
+            }
         }
 
         [Authorize(Roles = "Admin,Nhân viên")]
@@ -353,20 +381,10 @@ namespace FurnitureStoreAPI.Controllers
             await _context.SaveChangesAsync();
             await tx.CommitAsync();
 
-            try
-            {
-                var email = await GetUserEmailAsync(order.UserId);
-                if (email != null)
-                {
-                    await _emailService.SendAsync(
-                        email,
-                        $"Xác nhận đơn hàng #{order.Id} — LuxWood",
-                        EmailTemplates.OrderConfirmation(order));
-                }
-            }
-            catch
-            {
-            }
+            // Đơn COD: gửi email xác nhận ngay. Đơn QR: CHƯA gửi — đợi tiền về (webhook SePay hoặc khách
+            // bấm "Tôi đã chuyển khoản") rồi mới gửi, xem SendOrderConfirmationAsync.
+            if (order.PaymentMethod != "QR")
+                await SendOrderConfirmationAsync(order);
 
             // confirmCode: mã để KHÁCH vừa đặt đơn này xác nhận "Tôi đã chuyển khoản" (đơn QR).
             // Luôn trả về dạng { order, couponNote, confirmCode } — Client đọc order qua res.data.order.
@@ -421,6 +439,93 @@ namespace FurnitureStoreAPI.Controllers
             return null;
         }
 
+        // Hoàn lại những gì đơn đã "giữ" lúc tạo: 1 lượt dùng mã giảm giá + tồn kho từng dòng
+        // (biến thể và kho tổng). Dùng chung cho cả Admin/Nhân viên đổi sang "Huỷ" (UpdateStatus)
+        // lẫn khách tự huỷ đơn (CancelMyOrder). Chỉ thay đổi dữ liệu đang được theo dõi, người gọi tự SaveChanges.
+        private async Task RestoreStockAndCouponAsync(Order order)
+        {
+            // Trả lại 1 lượt dùng mã giảm giá để mã giới hạn lượt không bị "mất" oan vì đơn đã huỷ.
+            if (!string.IsNullOrEmpty(order.CouponCode))
+            {
+                var coupon = await _context.Coupons.FirstOrDefaultAsync(c => c.Code == order.CouponCode);
+                if (coupon != null && coupon.UsedCount > 0) coupon.UsedCount -= 1;
+            }
+
+            foreach (var item in order.OrderItems)
+            {
+                var product = await _context.Products.FindAsync(item.ProductId);
+                if (product == null) continue;
+
+                if (item.VariantId.HasValue)
+                {
+                    var variant = await _context.ProductVariants.FindAsync(item.VariantId.Value);
+                    if (variant != null) variant.Stock += item.Quantity;
+                    product.Stock += item.Quantity;
+                }
+                else
+                {
+                    product.Stock += item.Quantity;
+                }
+            }
+        }
+
+        // POST: api/orders/5/cancel — KHÁCH tự huỷ đơn CỦA MÌNH.
+        // Điều kiện: đã đăng nhập, đơn thuộc về chính khách đó, và đơn còn ở "Chờ xác nhận"
+        // (cửa hàng chưa xử lý). Đơn QR mà khách đã báo "đã chuyển khoản" thì không tự huỷ được
+        // vì còn vướng chuyện hoàn tiền — khách liên hệ cửa hàng.
+        // Đơn không phải của khách → trả 404 như đơn không tồn tại (không để lộ đơn của người khác).
+        [Authorize]
+        [HttpPost("{id}/cancel")]
+        public async Task<IActionResult> CancelMyOrder(int id)
+        {
+            var idClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (!int.TryParse(idClaim, out var userId))
+                return Unauthorized();
+
+            var order = await _context.Orders
+                .Include(o => o.OrderItems)
+                .FirstOrDefaultAsync(o => o.Id == id && o.UserId == userId);
+            if (order == null)
+                return NotFound(new { message = "Không tìm thấy đơn hàng." });
+
+            if (order.Status != "Chờ xác nhận")
+                return BadRequest(new { message = "Chỉ có thể huỷ đơn hàng đang ở trạng thái \"Chờ xác nhận\"." });
+
+            if (order.PaymentMethod == "QR" && order.PaymentStatus == "Đã thanh toán")
+                return BadRequest(new { message = "Đơn này đã chuyển khoản. Vui lòng liên hệ cửa hàng để được hỗ trợ huỷ và hoàn tiền." });
+
+            await using var tx = await _context.Database.BeginTransactionAsync();
+
+            // "Giành" quyền huỷ bằng 1 câu UPDATE có điều kiện: nếu cùng lúc nhân viên vừa chuyển đơn sang
+            // "Đang xử lý" (hoặc khách bấm huỷ 2 lần) thì chỉ 1 bên thắng, bên còn lại không huỷ và không hoàn kho lần 2.
+            var claimed = await _context.Orders
+                .Where(o => o.Id == id && o.Status == "Chờ xác nhận")
+                .ExecuteUpdateAsync(s => s.SetProperty(o => o.Status, "Huỷ"));
+            if (claimed == 0)
+                return Conflict(new { message = "Đơn hàng vừa được cập nhật, vui lòng tải lại trang." });
+
+            await RestoreStockAndCouponAsync(order);
+            await _context.SaveChangesAsync();
+            await tx.CommitAsync();
+
+            try
+            {
+                var email = await GetUserEmailAsync(order.UserId);
+                if (email != null)
+                {
+                    await _emailService.SendAsync(
+                        email,
+                        $"Đơn hàng #{order.Id} — Huỷ",
+                        EmailTemplates.OrderStatusUpdate(order, "Huỷ"));
+                }
+            }
+            catch
+            {
+            }
+
+            return Ok(new { message = "Đã huỷ đơn hàng.", status = "Huỷ" });
+        }
+
         [Authorize(Roles = "Admin,Nhân viên")]
         [HttpPatch("{id}/status")]
         public async Task<IActionResult> UpdateStatus(int id, [FromBody] string status)
@@ -451,31 +556,7 @@ namespace FurnitureStoreAPI.Controllers
             // tồn kho bị "mất" oan khi khách/Admin huỷ đơn. Chỉ hoàn 1 lần — nếu đơn ĐÃ
             // huỷ từ trước rồi lại bấm huỷ lần nữa thì không hoàn thêm lần 2.
             if (status == "Huỷ" && order.Status != "Huỷ")
-            {
-                // Trả lại 1 lượt dùng mã giảm giá để mã giới hạn lượt không bị "mất" oan vì đơn đã huỷ.
-                if (!string.IsNullOrEmpty(order.CouponCode))
-                {
-                    var coupon = await _context.Coupons.FirstOrDefaultAsync(c => c.Code == order.CouponCode);
-                    if (coupon != null && coupon.UsedCount > 0) coupon.UsedCount -= 1;
-                }
-
-                foreach (var item in order.OrderItems)
-                {
-                    var product = await _context.Products.FindAsync(item.ProductId);
-                    if (product == null) continue;
-
-                    if (item.VariantId.HasValue)
-                    {
-                        var variant = await _context.ProductVariants.FindAsync(item.VariantId.Value);
-                        if (variant != null) variant.Stock += item.Quantity;
-                        product.Stock += item.Quantity;
-                    }
-                    else
-                    {
-                        product.Stock += item.Quantity;
-                    }
-                }
-            }
+                await RestoreStockAndCouponAsync(order);
 
             order.Status = status;
             await _context.SaveChangesAsync();
@@ -511,7 +592,12 @@ namespace FurnitureStoreAPI.Controllers
             if (!_tokenService.VerifyOrderConfirmCode(id, dto.Code ?? ""))
                 return BadRequest(new { message = "Mã xác nhận không hợp lệ." });
 
-            var order = await _context.Orders.FindAsync(id);
+            // Đã bật tự động xác nhận qua ngân hàng → KHÔNG cho khách tự báo "đã chuyển khoản" nữa,
+            // nếu không ai cũng bấm được để đơn thành "Đã thanh toán" mà chưa trả tiền.
+            if (IsAutoConfirmEnabled())
+                return BadRequest(new { message = "Hệ thống tự động xác nhận khi nhận được tiền, vui lòng đợi trong giây lát." });
+
+            var order = await _context.Orders.Include(o => o.OrderItems).FirstOrDefaultAsync(o => o.Id == id);
             if (order == null) return NotFound();
 
             if (order.PaymentMethod != "QR")
@@ -523,8 +609,51 @@ namespace FurnitureStoreAPI.Controllers
             {
                 order.PaymentStatus = "Đã thanh toán";
                 await _context.SaveChangesAsync();
+                await SendOrderConfirmationAsync(order); // đơn QR: giờ mới gửi email xác nhận
             }
             return NoContent();
+        }
+
+        // GET: api/orders/5/payment-status?code=... — Client hỏi mỗi vài giây ở màn hình QR để biết đã nhận tiền
+        // chưa. Công khai nhưng PHẢI kèm mã xác nhận của đơn (giống confirm-transfer), nên chỉ chính khách vừa
+        // đặt đơn mới hỏi được. autoConfirm cho Client biết có nên ẩn nút "Tôi đã chuyển khoản" hay không.
+        [HttpGet("{id}/payment-status")]
+        public async Task<IActionResult> GetPaymentStatus(int id, [FromQuery] string? code)
+        {
+            if (!_tokenService.VerifyOrderConfirmCode(id, code ?? ""))
+                return BadRequest(new { message = "Mã xác nhận không hợp lệ." });
+
+            var info = await _context.Orders.AsNoTracking()
+                .Where(o => o.Id == id)
+                .Select(o => new { o.PaymentMethod, o.PaymentStatus, o.Status, o.Total })
+                .FirstOrDefaultAsync();
+            if (info == null) return NotFound();
+
+            var paymentStatus = info.PaymentStatus;
+
+            if (info.PaymentMethod == "QR" && info.PaymentStatus != "Đã thanh toán" && info.Status != "Huỷ"
+                && !SePayPoller.IsConfigured(_config))
+                _logger.LogWarning("SePay: CHƯA CÓ SePay:ApiToken trong appsettings.json (hoặc chưa chạy lại Backend) nên không hỏi được SePay cho đơn #{OrderId}.", id);
+
+            // Chế độ "Backend hỏi SePay" (không cần webhook/ngrok): đơn QR chưa trả tiền → hỏi SePay xem đã có
+            // giao dịch tiền vào đúng mã DH{id} và đủ tiền chưa. Có thì ghi nhận thanh toán NGAY tại đây.
+            if (info.PaymentMethod == "QR" && info.PaymentStatus != "Đã thanh toán" && info.Status != "Huỷ"
+                && SePayPoller.IsConfigured(_config)
+                && await SePayPoller.HasPaidAsync(_config, id, info.Total, _logger))
+            {
+                // Cập nhật có điều kiện (nguyên tử): chỉ lần đầu tiên updated > 0 → chỉ gửi email 1 lần.
+                var updated = await _context.Orders
+                    .Where(o => o.Id == id && o.Status != "Huỷ" && o.PaymentStatus != "Đã thanh toán")
+                    .ExecuteUpdateAsync(s => s.SetProperty(o => o.PaymentStatus, "Đã thanh toán"));
+                paymentStatus = "Đã thanh toán";
+                if (updated > 0)
+                {
+                    var full = await _context.Orders.AsNoTracking().Include(o => o.OrderItems).FirstOrDefaultAsync(o => o.Id == id);
+                    if (full != null) await SendOrderConfirmationAsync(full);
+                }
+            }
+
+            return Ok(new { paymentStatus, status = info.Status, autoConfirm = IsAutoConfirmEnabled() });
         }
 
         // Admin/Nhân viên xác nhận ĐÃ NHẬN TIỀN — dùng cho đơn COD (thu tiền tận tay khi giao hàng).
